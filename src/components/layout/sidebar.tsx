@@ -14,6 +14,7 @@ import {
 import { canAccess } from "@/lib/permissions";
 import type { Role } from "@/generated/prisma/enums";
 import { UserMenu } from "./user-menu";
+import { useGlobalSearch } from "@/components/search/global-search";
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
@@ -43,6 +44,7 @@ export function Sidebar({
   email: string;
 }) {
   const pathname = usePathname();
+  const openSearch = useGlobalSearch();
 
   const items = NAV_ITEMS.filter(
     (item) =>
@@ -70,13 +72,17 @@ export function Sidebar({
       </div>
 
       <div className="px-2 pb-0.5 pt-1.5">
-        <div className="flex cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground">
+        <button
+          type="button"
+          onClick={openSearch}
+          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
           <Search className="h-3.5 w-3.5" />
           <span className="text-[13px]">Search</span>
           <span className="ml-auto rounded border px-1 font-mono text-[11px] text-tertiary-foreground">
             ⌘K
           </span>
-        </div>
+        </button>
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-1.5 pb-3">

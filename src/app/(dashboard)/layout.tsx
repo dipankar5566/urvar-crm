@@ -5,6 +5,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { getRecentNotifications } from "@/components/layout/notification-actions";
 import { CallProvider } from "@/components/calling/call-provider";
 import { ActiveCallBar } from "@/components/calling/active-call-bar";
+import { GlobalSearchProvider } from "@/components/search/global-search";
 
 export default async function DashboardLayout({
   children,
@@ -34,5 +35,7 @@ export default async function DashboardLayout({
     </div>
   );
 
-  return canCall ? <CallProvider>{body}</CallProvider> : body;
+  const withCall = canCall ? <CallProvider>{body}</CallProvider> : body;
+
+  return <GlobalSearchProvider>{withCall}</GlobalSearchProvider>;
 }

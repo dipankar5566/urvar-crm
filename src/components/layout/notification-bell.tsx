@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -81,17 +82,19 @@ export function NotificationBell({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <div className="flex items-center justify-between px-1.5 py-1">
-          <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
-          {unreadCount > 0 && (
-            <button
-              onClick={onMarkAllRead}
-              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Mark all read
-            </button>
-          )}
-        </div>
+        <DropdownMenuGroup>
+          <div className="flex items-center justify-between px-1.5 py-1">
+            <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+            {unreadCount > 0 && (
+              <button
+                onClick={onMarkAllRead}
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                Mark all read
+              </button>
+            )}
+          </div>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         {notifications.length === 0 && (
           <p className="px-1.5 py-4 text-center text-sm text-muted-foreground">

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { NAV_ITEMS } from "@/lib/constants/nav";
 import { NotificationBell } from "./notification-bell";
 import { UserMenu } from "./user-menu";
+import { useGlobalSearch } from "@/components/search/global-search";
 
 type NotificationItem = {
   id: string;
@@ -44,6 +45,7 @@ export function Topbar({
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { title, backHref } = resolvePage(pathname);
+  const openSearch = useGlobalSearch();
 
   return (
     <header className="flex h-[45px] items-center gap-1 border-b bg-background px-4">
@@ -67,10 +69,14 @@ export function Topbar({
       {!backHref && <span className="text-sm font-medium">{title}</span>}
 
       <div className="ml-auto flex items-center gap-0.5">
-        <div className="flex cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={openSearch}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
           <Search className="h-4 w-4" />
           <span className="hidden sm:inline">Search</span>
-        </div>
+        </button>
         <NotificationBell
           initialNotifications={initialNotifications}
           initialUnreadCount={initialUnreadCount}

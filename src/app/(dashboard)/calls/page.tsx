@@ -63,6 +63,7 @@ export default async function CallsPage({
               <TableHead>Direction</TableHead>
               <TableHead>Outcome</TableHead>
               <TableHead>Duration</TableHead>
+              <TableHead>Recording</TableHead>
               <TableHead>Notes</TableHead>
               {showRep && <TableHead>Rep</TableHead>}
               <TableHead>Called At</TableHead>
@@ -71,7 +72,7 @@ export default async function CallsPage({
           <TableBody>
             {calls.length === 0 && (
               <TableRow>
-                <TableCell colSpan={showRep ? 7 : 6} className="text-center text-muted-foreground">
+                <TableCell colSpan={showRep ? 8 : 7} className="text-center text-muted-foreground">
                   No calls logged yet.
                 </TableCell>
               </TableRow>
@@ -99,6 +100,13 @@ export default async function CallsPage({
                 </TableCell>
                 <TableCell>
                   {call.durationSeconds ? `${call.durationSeconds}s` : "—"}
+                </TableCell>
+                <TableCell>
+                  {call.recordingUrl?.startsWith("/api/voice/recordings/") ? (
+                    <audio controls preload="none" src={call.recordingUrl} className="h-8" />
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-60 truncate text-muted-foreground">
                   {call.notes ?? "—"}

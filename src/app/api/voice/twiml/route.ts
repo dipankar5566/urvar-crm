@@ -6,6 +6,7 @@ import {
   parseTwilioFormBody,
   twilio,
 } from "@/lib/twilio";
+import { toE164 } from "@/lib/phone";
 
 const { VoiceResponse } = twilio.twiml;
 
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
         },
       })
     : null;
-  const phone = call?.lead?.phone ?? call?.customer?.phone ?? null;
+  const phone = toE164(call?.lead?.phone ?? call?.customer?.phone ?? null);
 
   if (!call || !fromIdentity || call.userId !== fromIdentity || !phone) {
     response.say("Sorry, this call could not be authorized. Goodbye.");
