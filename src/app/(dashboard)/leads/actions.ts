@@ -272,6 +272,73 @@ export async function updateLeadStatus(
   return { success: true };
 }
 
+export async function updateLeadAssignee(
+  leadId: string,
+  assignedToId: string | null,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const scope = assertCan(user.role, "leads", "write");
+
+  const existing = await prisma.lead.findFirst({
+    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+  });
+  if (!existing) return { error: "Lead not found or access denied." };
+
+  if (assignedToId === existing.assignedToId) return { success: true };
+
+  // Same restriction updateLead() already applies to reassignment, extended
+  // to cover unassignment too — both are "change of ownership."
+  if (scope !== "all" && scope !== "territory") {
+    return { error: "You cannot reassign this lead." };
+  }
+
+  if (assignedToId) {
+    const rep = await prisma.user.findFirst({
+      where: { id: assignedToId, isActive: true },
+      select: { id: true },
+    });
+    if (!rep) return { error: "Selected user not found or inactive." };
+  }
+
+  await prisma.$transaction([
+    prisma.lead.update({ where: { id: leadId }, data: { assignedToId } }),
+    prisma.leadActivity.create({
+      data: {
+        leadId,
+        type: "LEAD_ASSIGNED",
+        description: assignedToId ? "Lead reassigned." : "Lead unassigned.",
+        createdById: user.id,
+      },
+    }),
+  ]);
+
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+
+  await logAudit({
+    userId: user.id,
+    action: "UPDATE",
+    entityType: "Lead",
+    entityId: leadId,
+    oldValue: { assignedToId: existing.assignedToId },
+    newValue: { assignedToId },
+  });
+
+  if (assignedToId) {
+    await notifyUser({
+      userId: assignedToId,
+      actingUserId: user.id,
+      type: "LEAD_ASSIGNED",
+      title: `Lead reassigned to you: ${existing.name}`,
+      body: `${user.name} reassigned lead ${existing.leadNumber} to you.`,
+      relatedLeadId: leadId,
+    });
+  }
+
+  return { success: true };
+}
+
 export async function addLeadNote(
   leadId: string,
   note: string,

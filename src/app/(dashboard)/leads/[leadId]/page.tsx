@@ -23,6 +23,7 @@ import {
 } from "@/lib/constants/labels";
 import { LeadActivityTimeline } from "./lead-activity-timeline";
 import { LeadStatusForm } from "./lead-status-form";
+import { LeadAssigneeSelect } from "./lead-assignee-select";
 import { ConvertButton } from "./convert-button";
 import { LogCallDialog } from "./log-call-dialog";
 import { CallButton } from "./call-button";
@@ -70,13 +71,15 @@ export default async function LeadDetailPage({
 
   if (!lead) notFound();
 
-  const canWrite = can(user.role, "leads", "write") !== "none";
+  const writeScope = can(user.role, "leads", "write");
+  const canWrite = writeScope !== "none";
+  const canAssign = writeScope === "all" || writeScope === "territory";
   const canLogCalls = can(user.role, "calls", "write") !== "none";
   const canScheduleFollowUps = can(user.role, "followups", "write") !== "none";
   const canCreateTasks = can(user.role, "tasks", "write") !== "none";
   const taskAssignScope = can(user.role, "tasks", "write");
   const reps =
-    canCreateTasks && taskAssignScope === "all"
+    canAssign || (canCreateTasks && taskAssignScope === "all")
       ? await prisma.user.findMany({
           where: { isActive: true },
           select: { id: true, name: true },
@@ -162,7 +165,15 @@ export default async function LeadDetailPage({
               <Property label="Crop Interest">{lead.cropInterest}</Property>
             )}
             <Property label="Assigned To">
-              {lead.assignedTo?.name ?? "Unassigned"}
+              {canAssign ? (
+                <LeadAssigneeSelect
+                  leadId={lead.id}
+                  assignedToId={lead.assignedToId}
+                  reps={reps}
+                />
+              ) : (
+                lead.assignedTo?.name ?? "Unassigned"
+              )}
             </Property>
             <Property label="Created">
               {format(lead.createdAt, "d MMM yyyy")}
