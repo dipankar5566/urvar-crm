@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Pencil, Phone, Mail, MapPin, Sprout } from "lucide-react";
+import { format } from "date-fns";
+import { Pencil } from "lucide-react";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
@@ -12,8 +13,9 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/status-badge";
+import { initialsOf, colorFor } from "@/lib/avatar";
 import {
-  LEAD_STATUS_LABELS,
   LEAD_SOURCE_LABELS,
   CUSTOMER_TYPE_LABELS,
   PIPELINE_STAGE_LABELS,
@@ -26,6 +28,23 @@ import { LogCallDialog } from "./log-call-dialog";
 import { CallButton } from "./call-button";
 import { ScheduleFollowUpDialog } from "./schedule-follow-up-dialog";
 import { TaskForm } from "../../tasks/task-form";
+
+function Property({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="w-28 shrink-0 text-xs font-medium text-muted-foreground">
+        {label}
+      </div>
+      <div className="min-w-0 text-sm">{children}</div>
+    </div>
+  );
+}
 
 export default async function LeadDetailPage({
   params,
@@ -68,17 +87,25 @@ export default async function LeadDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">{lead.name}</h1>
-            <Badge variant="secondary">{lead.leadNumber}</Badge>
-            {lead.isGovernmentTender && (
-              <Badge variant="outline">Govt. Tender</Badge>
+        <div className="flex items-start gap-3.5">
+          <div
+            className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-base font-bold text-white"
+            style={{ background: colorFor(lead.name) }}
+          >
+            {initialsOf(lead.name)}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">{lead.name}</h1>
+              <Badge variant="secondary">{lead.leadNumber}</Badge>
+              {lead.isGovernmentTender && (
+                <Badge variant="outline">Govt. Tender</Badge>
+              )}
+            </div>
+            {lead.companyName && (
+              <p className="text-sm text-muted-foreground">{lead.companyName}</p>
             )}
           </div>
-          {lead.companyName && (
-            <p className="text-sm text-muted-foreground">{lead.companyName}</p>
-          )}
         </div>
         {canWrite && (
           <Button variant="outline" size="sm" render={<Link href={`/leads/${lead.id}/edit`} />}>
@@ -89,74 +116,14 @@ export default async function LeadDetailPage({
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-1">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Details</CardTitle>
+        <Card className="overflow-hidden p-0">
+          <CardHeader className="border-b py-2.5">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Properties
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex items-center gap-2">
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              {lead.phone}
-            </div>
-            {lead.email && (
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                {lead.email}
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-muted-foreground" />
-              {lead.district}, {lead.state}
-              {lead.pincode ? ` – ${lead.pincode}` : ""}
-            </div>
-            {lead.cropInterest && (
-              <div className="flex items-center gap-2">
-                <Sprout className="h-4 w-4 text-muted-foreground" />
-                {lead.cropInterest}
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2 pt-2 text-xs text-muted-foreground">
-              <div>
-                <p className="font-medium text-foreground">Type</p>
-                {CUSTOMER_TYPE_LABELS[lead.customerType] ?? lead.customerType}
-              </div>
-              <div>
-                <p className="font-medium text-foreground">Source</p>
-                {LEAD_SOURCE_LABELS[lead.source] ?? lead.source}
-              </div>
-              <div>
-                <p className="font-medium text-foreground">Est. Value</p>
-                {inr(lead.estimatedValue ? Number(lead.estimatedValue) : null)}
-              </div>
-              <div>
-                <p className="font-medium text-foreground">Assigned To</p>
-                {lead.assignedTo?.name ?? "Unassigned"}
-              </div>
-            </div>
-            {lead.interestedProducts && (
-              <div className="pt-2 text-xs">
-                <p className="font-medium text-foreground">Interested Products</p>
-                <p className="text-muted-foreground">{lead.interestedProducts}</p>
-              </div>
-            )}
-            {lead.remarks && (
-              <div className="pt-2 text-xs">
-                <p className="font-medium text-foreground">Remarks</p>
-                <p className="text-muted-foreground">{lead.remarks}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Status & Pipeline</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="mb-1 text-xs font-medium text-muted-foreground">
-                Lifecycle Status
-              </p>
+          <CardContent className="divide-y p-0">
+            <Property label="Status">
               {canWrite ? (
                 <LeadStatusForm
                   leadId={lead.id}
@@ -164,36 +131,98 @@ export default async function LeadDetailPage({
                   currentLostReason={lead.lostReason}
                 />
               ) : (
-                <Badge>{LEAD_STATUS_LABELS[lead.status] ?? lead.status}</Badge>
+                <StatusBadge status={lead.status} />
               )}
-            </div>
-            {lead.pipeline && (
-              <div>
-                <p className="mb-1 text-xs font-medium text-muted-foreground">
-                  Pipeline Stage
-                </p>
-                <Link href="/pipeline" className="hover:underline">
-                  <Badge variant="secondary">
-                    {PIPELINE_STAGE_LABELS[lead.pipeline.stage] ?? lead.pipeline.stage}
-                  </Badge>
-                </Link>
-              </div>
+            </Property>
+            <Property label="Type">
+              {CUSTOMER_TYPE_LABELS[lead.customerType] ?? lead.customerType}
+            </Property>
+            <Property label="Source">
+              {LEAD_SOURCE_LABELS[lead.source] ?? lead.source}
+            </Property>
+            <Property label="Est. Value">
+              <span className="font-medium">
+                {inr(lead.estimatedValue ? Number(lead.estimatedValue) : null)}
+              </span>
+            </Property>
+            <Property label="State">{lead.state}</Property>
+            <Property label="District">
+              {lead.district}
+              {lead.pincode ? ` – ${lead.pincode}` : ""}
+            </Property>
+            <Property label="Phone">
+              <span className="text-brand">{lead.phone}</span>
+            </Property>
+            {lead.email && (
+              <Property label="Email">
+                <span className="truncate text-brand">{lead.email}</span>
+              </Property>
             )}
-            {canWrite && (
-              <div className="pt-2">
-                <ConvertButton
-                  leadId={lead.id}
-                  alreadyConverted={!!lead.convertedAt}
-                />
-                {lead.convertedCustomer && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Customer: {lead.convertedCustomer.customerNumber}
-                  </p>
-                )}
-              </div>
+            {lead.cropInterest && (
+              <Property label="Crop Interest">{lead.cropInterest}</Property>
             )}
+            <Property label="Assigned To">
+              {lead.assignedTo?.name ?? "Unassigned"}
+            </Property>
+            <Property label="Created">
+              {format(lead.createdAt, "d MMM yyyy")}
+            </Property>
           </CardContent>
         </Card>
+
+        {(lead.interestedProducts || lead.remarks) && (
+          <Card>
+            <CardContent className="space-y-3 pt-4 text-sm">
+              {lead.interestedProducts && (
+                <div>
+                  <p className="text-xs font-medium text-foreground">Interested Products</p>
+                  <p className="text-muted-foreground">{lead.interestedProducts}</p>
+                </div>
+              )}
+              {lead.remarks && (
+                <div>
+                  <p className="text-xs font-medium text-foreground">Remarks</p>
+                  <p className="text-muted-foreground">{lead.remarks}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {(lead.pipeline || canWrite) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Pipeline</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {lead.pipeline && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">
+                    Pipeline Stage
+                  </p>
+                  <Link href="/pipeline" className="hover:underline">
+                    <Badge variant="secondary">
+                      {PIPELINE_STAGE_LABELS[lead.pipeline.stage] ?? lead.pipeline.stage}
+                    </Badge>
+                  </Link>
+                </div>
+              )}
+              {canWrite && (
+                <div>
+                  <ConvertButton
+                    leadId={lead.id}
+                    alreadyConverted={!!lead.convertedAt}
+                  />
+                  {lead.convertedCustomer && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Customer: {lead.convertedCustomer.customerNumber}
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {(canLogCalls || canScheduleFollowUps || canCreateTasks) && (
           <Card>

@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_ORDER, inr } from "@/lib/constants/labels";
+import { initialsOf, colorFor } from "@/lib/avatar";
 import { updateLeadStage } from "../leads/actions";
 
 export type KanbanLead = {
@@ -207,9 +208,17 @@ function LeadCard({
       </div>
       <div className="mt-1.5 flex items-center justify-between text-xs">
         <span className="font-medium">{inr(lead.estimatedValue)}</span>
-        {showAssignee && lead.assignedToName && (
-          <span className="text-muted-foreground">{lead.assignedToName}</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {showAssignee && lead.assignedToName && (
+            <span className="text-muted-foreground">{lead.assignedToName}</span>
+          )}
+          <div
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+            style={{ background: colorFor(lead.name) }}
+          >
+            {initialsOf(lead.name)}
+          </div>
+        </div>
       </div>
     </Link>
   );

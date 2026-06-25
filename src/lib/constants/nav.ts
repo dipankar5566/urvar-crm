@@ -1,11 +1,19 @@
 import type { Role } from "@/generated/prisma/enums";
 import type { Module } from "@/lib/permissions";
 
+export type NavSection = "sales" | "admin";
+
 export type NavItem = {
   label: string;
   href: string;
   icon: string; // lucide-react icon name
   module: Module; // used to check read access via permissions matrix
+  section?: NavSection; // groups the item under a labeled section in the sidebar
+};
+
+export const NAV_SECTION_LABELS: Record<NavSection, string> = {
+  sales: "Sales",
+  admin: "Admin",
 };
 
 /**
@@ -19,13 +27,13 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Calls", href: "/calls", icon: "Phone", module: "calls" },
   { label: "Follow-ups", href: "/follow-ups", icon: "CalendarClock", module: "followups" },
   { label: "Tasks", href: "/tasks", icon: "ListChecks", module: "tasks" },
-  { label: "Customers", href: "/customers", icon: "Building2", module: "customers" },
-  { label: "Distributors", href: "/customers/distributors", icon: "Network", module: "customers" },
-  { label: "Products", href: "/products", icon: "Package", module: "products" },
-  { label: "Quotations", href: "/quotations", icon: "FileText", module: "quotations" },
-  { label: "Reports", href: "/reports", icon: "BarChart3", module: "reports" },
-  { label: "Users", href: "/users", icon: "Users", module: "users" },
-  { label: "Audit Logs", href: "/audit-logs", icon: "ScrollText", module: "audit" },
+  { label: "Customers", href: "/customers", icon: "Building2", module: "customers", section: "sales" },
+  { label: "Distributors", href: "/customers/distributors", icon: "Network", module: "customers", section: "sales" },
+  { label: "Products", href: "/products", icon: "Package", module: "products", section: "sales" },
+  { label: "Quotations", href: "/quotations", icon: "FileText", module: "quotations", section: "sales" },
+  { label: "Reports", href: "/reports", icon: "BarChart3", module: "reports", section: "admin" },
+  { label: "Users", href: "/users", icon: "Users", module: "users", section: "admin" },
+  { label: "Audit Logs", href: "/audit-logs", icon: "ScrollText", module: "audit", section: "admin" },
 ];
 
 /** Dashboard is visible to every role regardless of module mapping. */

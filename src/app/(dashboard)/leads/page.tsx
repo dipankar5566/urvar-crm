@@ -4,8 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
 import { LeadFilters } from "./lead-filters";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/status-badge";
+import { initialsOf, colorFor } from "@/lib/avatar";
 import { UploadIcon } from "lucide-react";
 import {
   Table,
@@ -16,22 +17,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  LEAD_STATUS_LABELS,
   LEAD_SOURCE_LABELS,
   CUSTOMER_TYPE_LABELS,
   inr,
 } from "@/lib/constants/labels";
-
-const STATUS_BADGE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  NEW: "secondary",
-  CONTACTED: "secondary",
-  INTERESTED: "default",
-  FOLLOW_UP: "default",
-  QUOTATION_SENT: "default",
-  NEGOTIATION: "default",
-  WON: "outline",
-  LOST: "destructive",
-};
 
 export default async function LeadsPage({
   searchParams,
@@ -114,15 +103,25 @@ export default async function LeadsPage({
               {leads.map((lead) => (
                 <TableRow key={lead.id}>
                   <TableCell>
-                    <Link
-                      href={`/leads/${lead.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {lead.name}
-                    </Link>
-                    <div className="text-xs text-muted-foreground">
-                      {lead.leadNumber}
-                      {lead.companyName ? ` · ${lead.companyName}` : ""}
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                        style={{ background: colorFor(lead.name) }}
+                      >
+                        {initialsOf(lead.name)}
+                      </div>
+                      <div className="min-w-0">
+                        <Link
+                          href={`/leads/${lead.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {lead.name}
+                        </Link>
+                        <div className="text-xs text-tertiary-foreground">
+                          {lead.leadNumber}
+                          {lead.companyName ? ` · ${lead.companyName}` : ""}
+                        </div>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-sm">
@@ -135,9 +134,7 @@ export default async function LeadsPage({
                     {LEAD_SOURCE_LABELS[lead.source] ?? lead.source}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_BADGE_VARIANT[lead.status] ?? "secondary"}>
-                      {LEAD_STATUS_LABELS[lead.status] ?? lead.status}
-                    </Badge>
+                    <StatusBadge status={lead.status} />
                   </TableCell>
                   <TableCell className="text-sm">
                     {inr(lead.estimatedValue ? Number(lead.estimatedValue) : null)}

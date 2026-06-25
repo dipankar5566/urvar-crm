@@ -17,7 +17,7 @@ export default async function DashboardLayout({
 
   const body = (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar role={user.role} />
+      <Sidebar role={user.role} name={user.name} email={user.email} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar
           name={user.name}

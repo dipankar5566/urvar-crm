@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { endOfDay, startOfDay } from "date-fns";
 import {
   UserPlus,
@@ -18,11 +19,24 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
+import { initialsOf, colorFor } from "@/lib/avatar";
 import {
   LEAD_STATUS_LABELS,
   PRODUCT_CATEGORY_LABELS,
   inr,
 } from "@/lib/constants/labels";
+
+const STATUS_DOT: Record<string, string> = {
+  NEW: "var(--status-new-fg)",
+  CONTACTED: "var(--status-contacted-fg)",
+  INTERESTED: "var(--status-interested-fg)",
+  FOLLOW_UP: "var(--status-follow_up-fg)",
+  QUOTATION_SENT: "var(--status-quotation_sent-fg)",
+  NEGOTIATION: "var(--status-negotiation-fg)",
+  WON: "var(--status-won-fg)",
+  LOST: "var(--status-lost-fg)",
+};
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -50,6 +64,7 @@ export default async function DashboardPage() {
     leadsByState,
     pipelineValue,
     topProducts,
+    recentLeads,
   ] = await Promise.all([
     prisma.lead.count({
       where: { ...leadScope, createdAt: { gte: todayStart, lte: todayEnd } },
@@ -92,6 +107,12 @@ export default async function DashboardPage() {
       orderBy: { _sum: { lineTotal: "desc" } },
       take: 5,
     }),
+    prisma.lead.findMany({
+      where: leadScope,
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { id: true, name: true, companyName: true, status: true },
+    }),
   ]);
 
   const closed = wonLeads + lostLeads;
@@ -133,10 +154,28 @@ export default async function DashboardPage() {
       </div>
 
       {overdueFollowups > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
-          <AlertTriangle className="h-4 w-4" />
-          You have <strong>{overdueFollowups}</strong> overdue follow-up
-          {overdueFollowups === 1 ? "" : "s"}.
+        <div
+          className="flex items-center gap-2.5 rounded-md px-3.5 py-2.5 text-sm"
+          style={{
+            background: "rgba(255,167,52,0.1)",
+            border: "1px solid rgba(255,167,52,0.3)",
+            color: "#D9730D",
+          }}
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            <strong>
+              {overdueFollowups} overdue follow-up
+              {overdueFollowups === 1 ? "" : "s"}
+            </strong>{" "}
+            need your attention.
+          </span>
+          <Link
+            href="/follow-ups"
+            className="ml-auto shrink-0 font-medium text-brand hover:underline"
+          >
+            View →
+          </Link>
         </div>
       )}
 
@@ -161,7 +200,7 @@ export default async function DashboardPage() {
 
       <section>
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-          Sales Metrics
+          Performance
         </h2>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {metrics.map((c) => (
@@ -181,27 +220,77 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Leads by Status</CardTitle>
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <Card className="overflow-hidden p-0">
+          <CardHeader className="flex flex-row items-center justify-between border-b py-3">
+            <CardTitle className="text-sm">Recent Leads</CardTitle>
+            <Link
+              href="/leads"
+              className="text-xs font-medium text-brand hover:underline"
+            >
+              View all
+            </Link>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {leadsByStatus.length === 0 && (
-              <p className="text-sm text-muted-foreground">No leads yet.</p>
+          <CardContent className="space-y-0 p-0">
+            {recentLeads.length === 0 && (
+              <p className="px-4 py-6 text-sm text-muted-foreground">
+                No leads yet.
+              </p>
             )}
-            {leadsByStatus.map((row) => (
-              <div
-                key={row.status}
-                className="flex items-center justify-between text-sm"
+            {recentLeads.map((lead) => (
+              <Link
+                key={lead.id}
+                href={`/leads/${lead.id}`}
+                className="flex items-center gap-2.5 border-b px-4 py-2.5 text-sm last:border-b-0 hover:bg-accent"
               >
-                <span>{LEAD_STATUS_LABELS[row.status] ?? row.status}</span>
-                <Badge variant="secondary">{row._count._all}</Badge>
-              </div>
+                <div
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                  style={{ background: colorFor(lead.name) }}
+                >
+                  {initialsOf(lead.name)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{lead.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {lead.companyName ?? lead.name}
+                  </div>
+                </div>
+                <StatusBadge status={lead.status} />
+              </Link>
             ))}
           </CardContent>
         </Card>
 
+        <Card className="overflow-hidden p-0">
+          <CardHeader className="border-b py-3">
+            <CardTitle className="text-sm">Leads by Status</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-0 p-0">
+            {leadsByStatus.length === 0 && (
+              <p className="px-4 py-6 text-sm text-muted-foreground">
+                No leads yet.
+              </p>
+            )}
+            {leadsByStatus.map((row) => (
+              <div
+                key={row.status}
+                className="flex items-center justify-between border-b px-4 py-2.5 text-sm last:border-b-0"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: STATUS_DOT[row.status] }}
+                  />
+                  <span>{LEAD_STATUS_LABELS[row.status] ?? row.status}</span>
+                </div>
+                <span className="font-semibold">{row._count._all}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Leads by State</CardTitle>
