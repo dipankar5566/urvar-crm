@@ -81,10 +81,12 @@ export function UserFormDialog({
       const result = isEdit
         ? await updateUser(userId!, {
             name: values.name,
+            email: values.email,
             role: values.role,
             phone: values.phone,
             territoryStates: values.territoryStates,
             isActive: values.isActive,
+            password: values.password,
           })
         : await createUser({
             name: values.name,
@@ -128,26 +130,25 @@ export function UserFormDialog({
             <Input value={values.name} onChange={(e) => set("name")(e.target.value)} />
           </div>
 
-          {!isEdit && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Email</Label>
-                <Input
-                  type="email"
-                  value={values.email}
-                  onChange={(e) => set("email")(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Temporary Password</Label>
-                <Input
-                  type="password"
-                  value={values.password}
-                  onChange={(e) => set("password")(e.target.value)}
-                />
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={values.email}
+                onChange={(e) => set("email")(e.target.value)}
+              />
             </div>
-          )}
+            <div className="space-y-1.5">
+              <Label>{isEdit ? "New Password" : "Temporary Password"}</Label>
+              <Input
+                type="password"
+                placeholder={isEdit ? "Leave blank to keep current" : undefined}
+                value={values.password}
+                onChange={(e) => set("password")(e.target.value)}
+              />
+            </div>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { hashPassword } from "better-auth/crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { requireRole } from "@/lib/session";
@@ -82,16 +83,39 @@ export async function updateUser(
     return { error: "You cannot change your own role." };
   }
 
+  if (data.email !== existing.email) {
+    const emailTaken = await prisma.user.findUnique({ where: { email: data.email } });
+    if (emailTaken) return { error: "A user with this email already exists." };
+  }
+
   await prisma.user.update({
     where: { id: userId },
     data: {
       name: data.name,
+      email: data.email,
       role: data.role as never,
       phone: data.phone,
       territoryStates: data.territoryStates,
       isActive: data.isActive,
     },
   });
+
+  if (data.password) {
+    const passwordHash = await hashPassword(data.password);
+    const credentialAccount = await prisma.account.findFirst({
+      where: { userId, providerId: "credential" },
+    });
+    if (credentialAccount) {
+      await prisma.account.update({
+        where: { id: credentialAccount.id },
+        data: { password: passwordHash },
+      });
+    } else {
+      await prisma.account.create({
+        data: { userId, providerId: "credential", accountId: userId, password: passwordHash },
+      });
+    }
+  }
 
   revalidatePath("/users");
 
@@ -102,11 +126,19 @@ export async function updateUser(
     entityId: userId,
     oldValue: {
       name: existing.name,
+      email: existing.email,
       role: existing.role,
       isActive: existing.isActive,
       territoryStates: existing.territoryStates,
     },
-    newValue: data,
+    newValue: {
+      name: data.name,
+      email: data.email,
+      role: data.role,
+      isActive: data.isActive,
+      territoryStates: data.territoryStates,
+      ...(data.password ? { passwordChanged: true } : {}),
+    },
   });
 
   return { success: true };
