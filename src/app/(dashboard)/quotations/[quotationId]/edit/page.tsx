@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { PageHeader } from "@/components/layout/page-header";
 import { QuotationForm } from "../../quotation-form";
 
 export default async function EditQuotationPage({
@@ -55,10 +56,7 @@ export default async function EditQuotationPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Edit Quotation</h1>
-        <p className="text-sm text-muted-foreground">{quotation.quotationNumber}</p>
-      </div>
+      <PageHeader title="Edit Quotation" subtitle={quotation.quotationNumber} />
       <QuotationForm
         quotationId={quotation.id}
         customers={customers.map((c) => ({ id: c.id, label: `${c.name} (${c.customerNumber})` }))}

@@ -11,7 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import { CALL_DIRECTION_LABELS, CALL_OUTCOME_LABELS } from "@/lib/constants/labels";
 import { CallFilters } from "./call-filters";
 
@@ -46,16 +48,15 @@ export default async function CallsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
-        <p className="text-sm text-muted-foreground">
-          {calls.length} call{calls.length === 1 ? "" : "s"} logged.
-        </p>
-      </div>
+      <PageHeader
+        title="Calls"
+        subtitle={`${calls.length} call${calls.length === 1 ? "" : "s"} logged.`}
+      />
 
       <CallFilters />
 
-      <div className="rounded-lg border bg-card">
+      <Card>
+        <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
@@ -119,7 +120,8 @@ export default async function CallsPage({
             ))}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

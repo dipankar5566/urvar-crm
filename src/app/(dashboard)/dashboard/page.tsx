@@ -1,14 +1,6 @@
 import Link from "next/link";
 import { endOfDay, startOfDay } from "date-fns";
-import {
-  UserPlus,
-  Phone,
-  CalendarClock,
-  FileText,
-  TrendingUp,
-  Trophy,
-  AlertTriangle,
-} from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
@@ -19,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { initialsOf, colorFor } from "@/lib/avatar";
 import {
@@ -131,27 +124,25 @@ export default async function DashboardPage() {
   const productMap = new Map(products.map((p) => [p.id, p]));
 
   const today = [
-    { label: "New Leads", value: newLeadsToday, icon: UserPlus },
-    { label: "Calls Logged", value: callsToday, icon: Phone },
-    { label: "Follow-ups Due", value: followupsDueToday, icon: CalendarClock },
-    { label: "Quotations Sent", value: quotationsSentToday, icon: FileText },
+    { label: "New Leads", value: newLeadsToday },
+    { label: "Calls Logged", value: callsToday },
+    { label: "Follow-ups Due", value: followupsDueToday },
+    { label: "Quotations Sent", value: quotationsSentToday },
   ];
 
   const metrics = [
-    { label: "Total Leads", value: String(totalLeads), icon: UserPlus, hint: "in your scope" },
-    { label: "Won", value: String(wonLeads), icon: Trophy, hint: `${conversionRate}% conversion` },
-    { label: "Win Rate", value: `${winRate}%`, icon: TrendingUp, hint: `${closed} closed` },
-    { label: "Open Pipeline", value: inr(Number(pipelineValue._sum.estimatedValue ?? 0)), icon: TrendingUp, hint: "est. value" },
+    { label: "Total Leads", value: String(totalLeads), hint: "in your scope" },
+    { label: "Won", value: String(wonLeads), hint: `${conversionRate}% conversion` },
+    { label: "Win Rate", value: `${winRate}%`, hint: `${closed} closed` },
+    { label: "Open Pipeline", value: inr(Number(pipelineValue._sum.estimatedValue ?? 0)), hint: "est. value" },
   ];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Welcome back, {user.name.split(" ")[0]}. Here&apos;s today at a glance.
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        subtitle={`Welcome back, ${user.name.split(" ")[0]}. Here's today at a glance.`}
+      />
 
       {overdueFollowups > 0 && (
         <div
@@ -180,18 +171,19 @@ export default async function DashboardPage() {
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Today</h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
+          Today
+        </h2>
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
           {today.map((c) => (
-            <Card key={c.label}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
+            <Card key={c.label} className="p-0">
+              <CardContent className="px-[18px] py-4">
+                <div className="mb-2.5 text-xs font-medium text-muted-foreground">
                   {c.label}
-                </CardTitle>
-                <c.icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">{c.value}</div>
+                </div>
+                <div className="text-3xl leading-none font-bold tracking-[-0.03em]">
+                  {c.value}
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -199,21 +191,20 @@ export default async function DashboardPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">
+        <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
           Performance
         </h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
           {metrics.map((c) => (
-            <Card key={c.label}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
+            <Card key={c.label} className="p-0">
+              <CardContent className="px-[18px] py-4">
+                <div className="mb-2.5 text-xs font-medium text-muted-foreground">
                   {c.label}
-                </CardTitle>
-                <c.icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{c.value}</div>
-                <p className="text-xs text-muted-foreground">{c.hint}</p>
+                </div>
+                <div className="text-2xl leading-none font-bold tracking-[-0.025em]">
+                  {c.value}
+                </div>
+                <p className="mt-1.5 text-[11px] text-tertiary-foreground">{c.hint}</p>
               </CardContent>
             </Card>
           ))}

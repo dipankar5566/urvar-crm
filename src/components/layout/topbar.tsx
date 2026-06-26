@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { NAV_ITEMS } from "@/lib/constants/nav";
 import { NotificationBell } from "./notification-bell";
 import { UserMenu } from "./user-menu";
+import { MobileNavDrawer } from "./mobile-nav-drawer";
 import { useGlobalSearch } from "@/components/search/global-search";
+import type { Role } from "@/generated/prisma/enums";
 
 type NotificationItem = {
   id: string;
@@ -38,7 +40,7 @@ export function Topbar({
 }: {
   name: string;
   email: string;
-  role: string;
+  role: Role;
   initialNotifications: NotificationItem[];
   initialUnreadCount: number;
 }) {
@@ -49,6 +51,7 @@ export function Topbar({
 
   return (
     <header className="flex h-[45px] items-center gap-1 border-b bg-background px-4">
+      <MobileNavDrawer role={role} name={name} email={email} />
       {backHref && (
         <>
           <Link

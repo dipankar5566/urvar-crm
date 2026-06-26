@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { PageHeader } from "@/components/layout/page-header";
 import { CustomerForm } from "../../customer-form";
 
 export default async function EditCustomerPage({
@@ -29,10 +30,7 @@ export default async function EditCustomerPage({
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Edit Customer</h1>
-        <p className="text-sm text-muted-foreground">{customer.customerNumber}</p>
-      </div>
+      <PageHeader title="Edit Customer" subtitle={customer.customerNumber} />
       <CustomerForm
         customerId={customer.id}
         reps={reps}

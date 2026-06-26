@@ -12,7 +12,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import { TASK_PRIORITY_LABELS } from "@/lib/constants/labels";
 import { TaskForm } from "./task-form";
 import { TaskStatusSelect } from "./task-status-select";
@@ -76,17 +78,15 @@ export default async function TasksPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-          <p className="text-sm text-muted-foreground">
-            {tasks.length} task{tasks.length === 1 ? "" : "s"} in this view.
-          </p>
-        </div>
-        {writeAccess && (
-          <TaskForm reps={reps} canAssign={canAssign} currentUserId={user.id} />
-        )}
-      </div>
+      <PageHeader
+        title="Tasks"
+        subtitle={`${tasks.length} task${tasks.length === 1 ? "" : "s"} in this view.`}
+        action={
+          writeAccess && (
+            <TaskForm reps={reps} canAssign={canAssign} currentUserId={user.id} />
+          )
+        }
+      />
 
       <div className="flex gap-1 rounded-lg border bg-card p-1 w-fit">
         {VIEWS.map((v) => (
@@ -105,7 +105,8 @@ export default async function TasksPage({
         ))}
       </div>
 
-      <div className="rounded-lg border bg-card">
+      <Card>
+        <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
@@ -168,7 +169,8 @@ export default async function TasksPage({
             })}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

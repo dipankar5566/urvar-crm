@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search } from "lucide-react";
@@ -16,11 +17,20 @@ import type { Role } from "@/generated/prisma/enums";
 import { UserMenu } from "./user-menu";
 import { useGlobalSearch } from "@/components/search/global-search";
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <Link
       key={item.href}
       href={item.href}
+      onClick={onNavigate}
       className={cn(
         "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
         active
@@ -34,17 +44,15 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function Sidebar({
+/** Nav item list shared between the desktop sidebar and the mobile drawer. */
+export function NavLinks({
   role,
-  name,
-  email,
+  onNavigate,
 }: {
   role: Role;
-  name: string;
-  email: string;
+  onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const openSearch = useGlobalSearch();
 
   const items = NAV_ITEMS.filter(
     (item) =>
@@ -63,11 +71,54 @@ export function Sidebar({
   const sections: ("sales" | "admin")[] = ["sales", "admin"];
 
   return (
+    <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-1.5 pb-3">
+      {main.map((item) => (
+        <NavLink
+          key={item.href}
+          item={item}
+          active={isActive(item)}
+          onNavigate={onNavigate}
+        />
+      ))}
+
+      {sections.map((section) => {
+        const sectionItems = items.filter((i) => i.section === section);
+        if (sectionItems.length === 0) return null;
+        return (
+          <div key={section} className="mt-1.5">
+            <div className="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
+              {NAV_SECTION_LABELS[section]}
+            </div>
+            {sectionItems.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                active={isActive(item)}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+export function Sidebar({
+  role,
+  name,
+  email,
+}: {
+  role: Role;
+  name: string;
+  email: string;
+}) {
+  const openSearch = useGlobalSearch();
+
+  return (
     <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar md:flex">
       <div className="flex h-[45px] items-center gap-2 border-b px-2.5">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-green-600 text-xs font-bold text-white">
-          U
-        </div>
+        <Image src="/urvar-icon.png" alt="Urvar" width={28} height={28} className="rounded-md" />
         <span className="text-sm font-semibold">Urvar CRM</span>
       </div>
 
@@ -85,26 +136,7 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-1.5 pb-3">
-        {main.map((item) => (
-          <NavLink key={item.href} item={item} active={isActive(item)} />
-        ))}
-
-        {sections.map((section) => {
-          const sectionItems = items.filter((i) => i.section === section);
-          if (sectionItems.length === 0) return null;
-          return (
-            <div key={section} className="mt-1.5">
-              <div className="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
-                {NAV_SECTION_LABELS[section]}
-              </div>
-              {sectionItems.map((item) => (
-                <NavLink key={item.href} item={item} active={isActive(item)} />
-              ))}
-            </div>
-          );
-        })}
-      </nav>
+      <NavLinks role={role} />
 
       <div className="border-t p-1.5">
         <UserMenu name={name} email={email} role={role} mode="expanded" />

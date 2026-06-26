@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { PageHeader } from "@/components/layout/page-header";
 import { KanbanBoard, type KanbanLead } from "./kanban-board";
 
 export default async function PipelinePage() {
@@ -36,13 +38,23 @@ export default async function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-        <p className="text-sm text-muted-foreground">
-          Drag a card to move it through the sales funnel. {kanbanLeads.length}{" "}
-          active deal{kanbanLeads.length === 1 ? "" : "s"}.
-        </p>
+      <PageHeader
+        title="Pipeline"
+        subtitle={`Drag a card to move it through the sales funnel. ${kanbanLeads.length} active deal${kanbanLeads.length === 1 ? "" : "s"}.`}
+      />
+
+      <div className="flex border-b">
+        <Link
+          href="/leads"
+          className="px-3 py-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+        >
+          Table
+        </Link>
+        <span className="-mb-px border-b-2 border-brand px-3 py-1.5 text-[13px] font-medium text-foreground">
+          Board
+        </span>
       </div>
+
       <KanbanBoard initialLeads={kanbanLeads} showAssignee={showAssignee} />
     </div>
   );

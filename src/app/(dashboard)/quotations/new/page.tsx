@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { PageHeader } from "@/components/layout/page-header";
 import { QuotationForm } from "../quotation-form";
 
 export default async function NewQuotationPage({
@@ -47,12 +48,10 @@ export default async function NewQuotationPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New Quotation</h1>
-        <p className="text-sm text-muted-foreground">
-          Build a quotation with line items, discounts, and GST.
-        </p>
-      </div>
+      <PageHeader
+        title="New Quotation"
+        subtitle="Build a quotation with line items, discounts, and GST."
+      />
       <QuotationForm
         customers={customers.map((c) => ({ id: c.id, label: `${c.name} (${c.customerNumber})` }))}
         leads={leads.map((l) => ({ id: l.id, label: `${l.name} (${l.leadNumber})` }))}

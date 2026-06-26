@@ -4,10 +4,19 @@ import { useTransition } from "react";
 import { Phone } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useCall } from "@/components/calling/call-provider";
 import { initiateCall } from "../../calls/voice-actions";
 
-export function CallButton({ leadId, leadName }: { leadId: string; leadName: string }) {
+export function CallButton({
+  leadId,
+  leadName,
+  className,
+}: {
+  leadId: string;
+  leadName: string;
+  className?: string;
+}) {
   const { startCall, status, deviceReady } = useCall();
   const [pending, startTransition] = useTransition();
 
@@ -25,7 +34,7 @@ export function CallButton({ leadId, leadName }: { leadId: string; leadName: str
   return (
     <Button
       variant="outline"
-      className="w-full justify-start"
+      className={cn("w-full justify-start", className)}
       onClick={handleClick}
       disabled={pending || status !== "idle" || !deviceReady}
     >

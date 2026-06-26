@@ -6,6 +6,7 @@ import { can, scopeWhere } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -53,19 +54,17 @@ export default async function QuotationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Quotations</h1>
-          <p className="text-sm text-muted-foreground">
-            {quotations.length} quotation{quotations.length === 1 ? "" : "s"} in your view.
-          </p>
-        </div>
-        {canWrite && (
-          <Button render={<Link href="/quotations/new" />}>
-            <Plus /> New Quotation
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Quotations"
+        subtitle={`${quotations.length} quotation${quotations.length === 1 ? "" : "s"} in your view.`}
+        action={
+          canWrite && (
+            <Button render={<Link href="/quotations/new" />}>
+              <Plus /> New Quotation
+            </Button>
+          )
+        }
+      />
 
       <Card>
         <CardContent className="p-0">

@@ -5,6 +5,7 @@ import { can, scopeWhere } from "@/lib/permissions";
 import { LeadFilters } from "./lead-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/layout/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { initialsOf, colorFor } from "@/lib/avatar";
 import { UploadIcon } from "lucide-react";
@@ -59,18 +60,28 @@ export default async function LeadsPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-          <p className="text-sm text-muted-foreground">
-            {leads.length} lead{leads.length === 1 ? "" : "s"} in your view.
-          </p>
-        </div>
-        {(user.role === "SUPER_ADMIN" || user.role === "SALES_MANAGER") && (
-          <Button variant="outline" render={<Link href="/leads/import" />}>
-            <UploadIcon /> Import from Excel
-          </Button>
-        )}
+      <PageHeader
+        title="Leads"
+        subtitle={`${leads.length} lead${leads.length === 1 ? "" : "s"} in your view.`}
+        action={
+          (user.role === "SUPER_ADMIN" || user.role === "SALES_MANAGER") && (
+            <Button variant="outline" render={<Link href="/leads/import" />}>
+              <UploadIcon /> Import from Excel
+            </Button>
+          )
+        }
+      />
+
+      <div className="flex border-b">
+        <span className="-mb-px border-b-2 border-brand px-3 py-1.5 text-[13px] font-medium text-foreground">
+          Table
+        </span>
+        <Link
+          href="/pipeline"
+          className="px-3 py-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+        >
+          Board
+        </Link>
       </div>
 
       <LeadFilters reps={reps} showRepFilter={showRepFilter} />

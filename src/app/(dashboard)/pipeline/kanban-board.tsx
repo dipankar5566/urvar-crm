@@ -86,7 +86,7 @@ export function KanbanBoard({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      <div className="flex gap-3 overflow-x-auto pb-4">
+      <div className="flex gap-2.5 overflow-x-auto pb-4">
         {PIPELINE_STAGE_ORDER.map((stage) => {
           const stageLeads = leads.filter((l) => l.stage === stage);
           const totalValue = stageLeads.reduce(
@@ -130,11 +130,11 @@ function KanbanColumn({
     <div
       ref={setNodeRef}
       className={cn(
-        "flex w-64 shrink-0 flex-col rounded-lg border bg-muted/30 transition-colors",
+        "flex w-[238px] shrink-0 flex-col rounded-lg border bg-muted/30 transition-colors",
         isOver && "border-primary bg-primary/5",
       )}
     >
-      <div className="border-b px-3 py-2">
+      <div className="border-b px-3 py-2.5">
         <p className="text-sm font-medium">
           {PIPELINE_STAGE_LABELS[stage] ?? stage}
         </p>
@@ -142,7 +142,7 @@ function KanbanColumn({
           {leads.length} · {inr(totalValue)}
         </p>
       </div>
-      <div className="flex min-h-24 flex-1 flex-col gap-2 p-2">
+      <div className="flex min-h-24 flex-1 flex-col gap-1.5 p-2">
         {leads.map((lead) => (
           <DraggableCard key={lead.id} lead={lead} showAssignee={showAssignee} />
         ))}
@@ -190,7 +190,7 @@ function LeadCard({
     <Link
       href={`/leads/${lead.id}`}
       onClick={(e) => e.stopPropagation()}
-      className="block rounded-lg border bg-card p-2.5 text-sm shadow-sm hover:border-foreground/20"
+      className="block rounded-md border bg-card px-3 py-2.5 text-sm shadow-sm hover:border-foreground/20"
     >
       <p className="font-medium leading-snug">{lead.name}</p>
       {lead.companyName && (

@@ -5,6 +5,7 @@ import { can, scopeWhere } from "@/lib/permissions";
 import { CustomerFilters } from "../customer-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -66,13 +67,10 @@ export default async function DistributorsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Distributors & Dealers</h1>
-        <p className="text-sm text-muted-foreground">
-          {customers.length} distributor{customers.length === 1 ? "" : "s"}/dealer
-          {customers.length === 1 ? "" : "s"} in your view.
-        </p>
-      </div>
+      <PageHeader
+        title="Distributors & Dealers"
+        subtitle={`${customers.length} distributor${customers.length === 1 ? "" : "s"}/dealer${customers.length === 1 ? "" : "s"} in your view.`}
+      />
 
       <CustomerFilters
         reps={reps}

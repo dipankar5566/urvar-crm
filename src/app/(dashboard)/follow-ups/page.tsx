@@ -12,7 +12,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import { FOLLOWUP_STATUS_LABELS } from "@/lib/constants/labels";
 import { FollowUpRowActions } from "./follow-up-row-actions";
 
@@ -63,12 +65,10 @@ export default async function FollowUpsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Follow-ups</h1>
-        <p className="text-sm text-muted-foreground">
-          {followUps.length} follow-up{followUps.length === 1 ? "" : "s"} in this view.
-        </p>
-      </div>
+      <PageHeader
+        title="Follow-ups"
+        subtitle={`${followUps.length} follow-up${followUps.length === 1 ? "" : "s"} in this view.`}
+      />
 
       <div className="flex gap-1 rounded-lg border bg-card p-1 w-fit">
         {VIEWS.map((v) => (
@@ -87,7 +87,8 @@ export default async function FollowUpsPage({
         ))}
       </div>
 
-      <div className="rounded-lg border bg-card">
+      <Card>
+        <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
@@ -142,7 +143,8 @@ export default async function FollowUpsPage({
             })}
           </TableBody>
         </Table>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

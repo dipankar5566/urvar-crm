@@ -6,6 +6,7 @@ import { CustomerFilters } from "./customer-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/layout/page-header";
 import { UploadIcon } from "lucide-react";
 import {
   Table,
@@ -59,19 +60,17 @@ export default async function CustomersPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Customers</h1>
-          <p className="text-sm text-muted-foreground">
-            {customers.length} customer{customers.length === 1 ? "" : "s"} in your view.
-          </p>
-        </div>
-        {(user.role === "SUPER_ADMIN" || user.role === "SALES_MANAGER") && (
-          <Button variant="outline" render={<Link href="/customers/import" />}>
-            <UploadIcon /> Import from Excel
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Customers"
+        subtitle={`${customers.length} customer${customers.length === 1 ? "" : "s"} in your view.`}
+        action={
+          (user.role === "SUPER_ADMIN" || user.role === "SALES_MANAGER") && (
+            <Button variant="outline" render={<Link href="/customers/import" />}>
+              <UploadIcon /> Import from Excel
+            </Button>
+          )
+        }
+      />
 
       <CustomerFilters reps={reps} showRepFilter={showRepFilter} />
 

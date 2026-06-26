@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   LEAD_STATUS_LABELS,
   QUOTATION_STATUS_LABELS,
@@ -75,12 +76,10 @@ export default async function ReportsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          Filterable performance reports with CSV/Excel export.
-        </p>
-      </div>
+      <PageHeader
+        title="Reports"
+        subtitle="Filterable performance reports with CSV/Excel export."
+      />
 
       <ReportFiltersBar reps={reps} showRepFilter={showRepFilter} />
 

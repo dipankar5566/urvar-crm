@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { UserFormDialog } from "./user-form-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -23,15 +24,11 @@ export default async function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-          <p className="text-sm text-muted-foreground">
-            {users.length} team member{users.length === 1 ? "" : "s"}.
-          </p>
-        </div>
-        <UserFormDialog />
-      </div>
+      <PageHeader
+        title="Users"
+        subtitle={`${users.length} team member${users.length === 1 ? "" : "s"}.`}
+        action={<UserFormDialog />}
+      />
 
       <Card>
         <CardContent className="p-0">

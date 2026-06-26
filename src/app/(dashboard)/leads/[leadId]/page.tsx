@@ -110,11 +110,20 @@ export default async function LeadDetailPage({
             )}
           </div>
         </div>
-        {canWrite && (
-          <Button variant="outline" size="sm" render={<Link href={`/leads/${lead.id}/edit`} />}>
-            <Pencil /> Edit Lead
-          </Button>
-        )}
+        <div className="flex shrink-0 gap-2">
+          {canLogCalls && (
+            <CallButton
+              leadId={lead.id}
+              leadName={lead.name}
+              className="w-auto justify-center"
+            />
+          )}
+          {canWrite && (
+            <Button variant="outline" size="sm" render={<Link href={`/leads/${lead.id}/edit`} />}>
+              <Pencil /> Edit Lead
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -241,7 +250,6 @@ export default async function LeadDetailPage({
               <CardTitle className="text-base">Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {canLogCalls && <CallButton leadId={lead.id} leadName={lead.name} />}
               {canLogCalls && <LogCallDialog leadId={lead.id} />}
               {canScheduleFollowUps && <ScheduleFollowUpDialog leadId={lead.id} />}
               {canCreateTasks && (

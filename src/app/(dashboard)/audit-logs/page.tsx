@@ -2,6 +2,7 @@ import { requireRole } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -51,12 +52,10 @@ export default async function AuditLogsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Audit Logs</h1>
-        <p className="text-sm text-muted-foreground">
-          System-wide audit trail of every mutating action. Showing the most recent {logs.length}.
-        </p>
-      </div>
+      <PageHeader
+        title="Audit Logs"
+        subtitle={`System-wide audit trail of every mutating action. Showing the most recent ${logs.length}.`}
+      />
 
       <AuditLogFilters entityTypes={ENTITY_TYPES} actions={ACTIONS} users={users} />
 

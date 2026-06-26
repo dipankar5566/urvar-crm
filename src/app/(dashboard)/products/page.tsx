@@ -5,6 +5,7 @@ import { ProductFormDialog } from "./product-form-dialog";
 import { ProductActiveToggle } from "./product-active-toggle";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -25,15 +26,11 @@ export default async function ProductsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
-          <p className="text-sm text-muted-foreground">
-            {products.length} product{products.length === 1 ? "" : "s"} in the catalog.
-          </p>
-        </div>
-        {canWrite && <ProductFormDialog />}
-      </div>
+      <PageHeader
+        title="Products"
+        subtitle={`${products.length} product${products.length === 1 ? "" : "s"} in the catalog.`}
+        action={canWrite && <ProductFormDialog />}
+      />
 
       <Card>
         <CardContent className="p-0">

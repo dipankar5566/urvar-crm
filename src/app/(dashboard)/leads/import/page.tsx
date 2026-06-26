@@ -1,4 +1,5 @@
 import { requireRole } from "@/lib/session";
+import { PageHeader } from "@/components/layout/page-header";
 import { ImportWizard } from "./import-wizard";
 
 export default async function LeadImportPage() {
@@ -6,12 +7,10 @@ export default async function LeadImportPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Import Leads</h1>
-        <p className="text-sm text-muted-foreground">
-          Bulk-add leads from an Excel or CSV file.
-        </p>
-      </div>
+      <PageHeader
+        title="Import Leads"
+        subtitle="Bulk-add leads from an Excel or CSV file."
+      />
       <ImportWizard />
     </div>
   );

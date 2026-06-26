@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { PageHeader } from "@/components/layout/page-header";
 import { LeadForm } from "../../lead-form";
 
 export default async function EditLeadPage({
@@ -29,10 +30,7 @@ export default async function EditLeadPage({
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Edit Lead</h1>
-        <p className="text-sm text-muted-foreground">{lead.leadNumber}</p>
-      </div>
+      <PageHeader title="Edit Lead" subtitle={lead.leadNumber} />
       <LeadForm
         leadId={lead.id}
         reps={reps}
