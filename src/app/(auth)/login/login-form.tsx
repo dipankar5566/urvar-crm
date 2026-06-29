@@ -15,14 +15,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const DEMO_ACCOUNTS = [
-  { label: "Super Admin", email: "admin@urvar.in" },
-  { label: "Sales Manager", email: "rajesh.manager@urvar.in" },
-  { label: "Sales Executive", email: "priya.sales@urvar.in" },
-  { label: "Distributor Mgr", email: "amit.distributor@urvar.in" },
-  { label: "Accounts", email: "sunita.accounts@urvar.in" },
-];
-
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
@@ -79,27 +71,6 @@ export function LoginForm() {
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
-
-        <div className="mt-6 rounded-lg border bg-muted/40 p-3">
-          <p className="mb-2 text-xs font-medium text-muted-foreground">
-            Demo accounts (password: <code>Urvar@123</code>)
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {DEMO_ACCOUNTS.map((a) => (
-              <button
-                key={a.email}
-                type="button"
-                onClick={() => {
-                  setEmail(a.email);
-                  setPassword("Urvar@123");
-                }}
-                className="rounded-md border bg-background px-2 py-1 text-xs hover:bg-accent"
-              >
-                {a.label}
-              </button>
-            ))}
-          </div>
-        </div>
       </CardContent>
     </Card>
   );
