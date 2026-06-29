@@ -6,8 +6,10 @@ import { requireUser } from "@/lib/session";
 import { assertCan, scopeWhere } from "@/lib/permissions";
 import {
   customerFormSchema,
+  customerLocationSchema,
   type CustomerFormInput,
   type CustomerFormValues,
+  type CustomerLocationInput,
 } from "@/lib/validations/customer";
 import { generateCustomerNumber } from "@/lib/id-sequences";
 import { logAudit } from "@/lib/audit";
@@ -179,5 +181,69 @@ export async function updateCustomer(
     newValue: data,
   });
 
+  return { success: true };
+}
+
+export async function updateCustomerLocation(
+  customerId: string,
+  input: CustomerLocationInput,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const scope = assertCan(user.role, "customers", "write");
+  const parsed = customerLocationSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid coordinates" };
+  }
+  const { latitude, longitude } = parsed.data;
+
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    select: { id: true, latitude: true, longitude: true },
+  });
+  if (!existing) return { error: "Customer not found or access denied." };
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { latitude, longitude },
+  });
+
+  await logAudit({
+    userId: user.id,
+    action: "UPDATE",
+    entityType: "Customer",
+    entityId: customerId,
+    oldValue: { latitude: existing.latitude, longitude: existing.longitude },
+    newValue: { latitude, longitude },
+  });
+
+  revalidatePath(`/customers/${customerId}`);
+  return { success: true };
+}
+
+export async function clearCustomerLocation(customerId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const scope = assertCan(user.role, "customers", "write");
+
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    select: { id: true, latitude: true, longitude: true },
+  });
+  if (!existing) return { error: "Customer not found or access denied." };
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { latitude: null, longitude: null },
+  });
+
+  await logAudit({
+    userId: user.id,
+    action: "UPDATE",
+    entityType: "Customer",
+    entityId: customerId,
+    oldValue: { latitude: existing.latitude, longitude: existing.longitude },
+    newValue: { latitude: null, longitude: null },
+  });
+
+  revalidatePath(`/customers/${customerId}`);
   return { success: true };
 }

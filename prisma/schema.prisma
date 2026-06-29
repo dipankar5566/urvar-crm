@@ -465,6 +465,8 @@ model Customer {
   district       String
   pincode        String?
   address        String?
+  latitude       Float?
+  longitude      Float?
   gstNumber      String?
   panNumber      String?
 

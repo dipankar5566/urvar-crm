@@ -51,3 +51,10 @@ export type CustomerFormInput = z.input<typeof customerFormSchema>;
 export type CustomerFormValues = z.output<typeof customerFormSchema>;
 
 export const DEALER_TYPES = ["B2B_DEALER", "B2B_DISTRIBUTOR"] as const;
+
+export const customerLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+
+export type CustomerLocationInput = z.input<typeof customerLocationSchema>;
