@@ -9,12 +9,12 @@ import { useCall } from "@/components/calling/call-provider";
 import { initiateCall } from "../../calls/voice-actions";
 
 export function CallButton({
-  leadId,
-  leadName,
+  customerId,
+  customerName,
   className,
 }: {
-  leadId: string;
-  leadName: string;
+  customerId: string;
+  customerName: string;
   className?: string;
 }) {
   const { startCall, status, deviceReady } = useCall();
@@ -22,12 +22,12 @@ export function CallButton({
 
   function handleClick() {
     startTransition(async () => {
-      const result = await initiateCall({ leadId });
+      const result = await initiateCall({ customerId });
       if ("error" in result) {
         toast.error(result.error);
         return;
       }
-      startCall({ callId: result.id!, leadId, leadName });
+      startCall({ callId: result.id!, customerId, customerName });
     });
   }
 

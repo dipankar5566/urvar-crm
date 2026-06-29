@@ -10,7 +10,7 @@ import { logAudit } from "@/lib/audit";
 type ActionResult = { error: string } | { success: true; id?: string };
 
 export async function logCall(
-  leadId: string,
+  target: { leadId: string } | { customerId: string },
   input: CallLogInput,
 ): Promise<ActionResult> {
   const user = await requireUser();
@@ -21,15 +21,57 @@ export async function logCall(
   }
   const data = parsed.data;
 
-  const leadScope = can(user.role, "leads", "read");
-  const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+  if ("leadId" in target) {
+    const leadScope = can(user.role, "leads", "read");
+    const lead = await prisma.lead.findFirst({
+      where: { id: target.leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+    });
+    if (!lead) return { error: "Lead not found or access denied." };
+
+    const call = await prisma.call.create({
+      data: {
+        leadId: target.leadId,
+        userId: user.id,
+        direction: data.direction as never,
+        outcome: data.outcome as never,
+        durationSeconds: data.durationSeconds,
+        notes: data.notes,
+      },
+    });
+
+    await prisma.leadActivity.create({
+      data: {
+        leadId: target.leadId,
+        type: "CALL_LOGGED",
+        description: `${data.direction === "INBOUND" ? "Inbound" : "Outbound"} call — ${data.outcome.replaceAll("_", " ")}.`,
+        createdById: user.id,
+      },
+    });
+
+    revalidatePath(`/leads/${target.leadId}`);
+    revalidatePath("/calls");
+    revalidatePath("/dashboard");
+
+    await logAudit({
+      userId: user.id,
+      action: "CREATE",
+      entityType: "Call",
+      entityId: call.id,
+      newValue: { leadId: target.leadId, direction: data.direction, outcome: data.outcome },
+    });
+
+    return { success: true, id: call.id };
+  }
+
+  const customerScope = can(user.role, "customers", "read");
+  const customer = await prisma.customer.findFirst({
+    where: { id: target.customerId, ...scopeWhere(customerScope, user, "assignedToId") },
   });
-  if (!lead) return { error: "Lead not found or access denied." };
+  if (!customer) return { error: "Customer not found or access denied." };
 
   const call = await prisma.call.create({
     data: {
-      leadId,
+      customerId: target.customerId,
       userId: user.id,
       direction: data.direction as never,
       outcome: data.outcome as never,
@@ -38,16 +80,7 @@ export async function logCall(
     },
   });
 
-  await prisma.leadActivity.create({
-    data: {
-      leadId,
-      type: "CALL_LOGGED",
-      description: `${data.direction === "INBOUND" ? "Inbound" : "Outbound"} call — ${data.outcome.replaceAll("_", " ")}.`,
-      createdById: user.id,
-    },
-  });
-
-  revalidatePath(`/leads/${leadId}`);
+  revalidatePath(`/customers/${target.customerId}`);
   revalidatePath("/calls");
   revalidatePath("/dashboard");
 
@@ -56,7 +89,7 @@ export async function logCall(
     action: "CREATE",
     entityType: "Call",
     entityId: call.id,
-    newValue: { leadId, direction: data.direction, outcome: data.outcome },
+    newValue: { customerId: target.customerId, direction: data.direction, outcome: data.outcome },
   });
 
   return { success: true, id: call.id };

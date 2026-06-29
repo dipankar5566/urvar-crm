@@ -11,20 +11,42 @@ type ActionResult = { error: string } | { success: true; id?: string };
 /** Creates a pending Call row for an in-browser Twilio call. The browser only
  * ever passes back this row's id — the actual phone number is resolved
  * server-side in the TwiML webhook, never trusted from the client. */
-export async function initiateCall(leadId: string): Promise<ActionResult> {
+export async function initiateCall(
+  target: { leadId: string } | { customerId: string },
+): Promise<ActionResult> {
   const user = await requireUser();
   assertCan(user.role, "calls", "write");
 
-  const leadScope = can(user.role, "leads", "read");
-  const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+  if ("leadId" in target) {
+    const leadScope = can(user.role, "leads", "read");
+    const lead = await prisma.lead.findFirst({
+      where: { id: target.leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+      select: { id: true },
+    });
+    if (!lead) return { error: "Lead not found or access denied." };
+
+    const call = await prisma.call.create({
+      data: {
+        leadId: target.leadId,
+        userId: user.id,
+        direction: "OUTBOUND",
+        provider: "TWILIO",
+      },
+    });
+
+    return { success: true, id: call.id };
+  }
+
+  const customerScope = can(user.role, "customers", "read");
+  const customer = await prisma.customer.findFirst({
+    where: { id: target.customerId, ...scopeWhere(customerScope, user, "assignedToId") },
     select: { id: true },
   });
-  if (!lead) return { error: "Lead not found or access denied." };
+  if (!customer) return { error: "Customer not found or access denied." };
 
   const call = await prisma.call.create({
     data: {
-      leadId,
+      customerId: target.customerId,
       userId: user.id,
       direction: "OUTBOUND",
       provider: "TWILIO",
@@ -67,6 +89,8 @@ export async function completeVoiceCall(
       },
     });
     revalidatePath(`/leads/${existing.leadId}`);
+  } else if (existing.customerId) {
+    revalidatePath(`/customers/${existing.customerId}`);
   }
 
   revalidatePath("/calls");

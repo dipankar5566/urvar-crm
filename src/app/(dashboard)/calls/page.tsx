@@ -40,6 +40,7 @@ export default async function CallsPage({
     where,
     include: {
       lead: { select: { id: true, name: true, leadNumber: true } },
+      customer: { select: { id: true, name: true, customerNumber: true } },
       user: { select: { name: true } },
     },
     orderBy: { calledAt: "desc" },
@@ -60,7 +61,7 @@ export default async function CallsPage({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Lead</TableHead>
+              <TableHead>Contact</TableHead>
               <TableHead>Direction</TableHead>
               <TableHead>Outcome</TableHead>
               <TableHead>Duration</TableHead>
@@ -84,6 +85,10 @@ export default async function CallsPage({
                   {call.lead ? (
                     <Link href={`/leads/${call.lead.id}`} className="hover:underline">
                       {call.lead.name}
+                    </Link>
+                  ) : call.customer ? (
+                    <Link href={`/customers/${call.customer.id}`} className="hover:underline">
+                      {call.customer.name}
                     </Link>
                   ) : (
                     <span className="text-muted-foreground">—</span>

@@ -51,7 +51,9 @@ export function ActiveCallBar() {
     <div className="fixed bottom-4 right-4 z-50 w-80 rounded-lg border bg-card shadow-lg">
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div>
-          <p className="text-sm font-medium">{activeCall.leadName ?? "Call"}</p>
+          <p className="text-sm font-medium">
+            {activeCall.leadName ?? activeCall.customerName ?? "Call"}
+          </p>
           <p className="text-xs text-muted-foreground">
             {status === "connecting" && "Connecting…"}
             {status === "in-progress" && formatDuration(durationSeconds)}

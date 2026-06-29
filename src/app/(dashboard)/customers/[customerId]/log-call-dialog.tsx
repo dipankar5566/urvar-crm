@@ -25,7 +25,7 @@ import {
 import { CALL_DIRECTION_LABELS, CALL_OUTCOME_LABELS } from "@/lib/constants/labels";
 import { logCall } from "../../calls/actions";
 
-export function LogCallDialog({ leadId }: { leadId: string }) {
+export function LogCallDialog({ customerId }: { customerId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -36,7 +36,7 @@ export function LogCallDialog({ leadId }: { leadId: string }) {
 
   function submit() {
     startTransition(async () => {
-      const result = await logCall({ leadId }, {
+      const result = await logCall({ customerId }, {
         direction,
         outcome,
         durationSeconds: duration ? Number(duration) : null,

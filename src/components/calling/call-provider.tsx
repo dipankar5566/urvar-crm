@@ -18,6 +18,8 @@ type ActiveCall = {
   callId: string;
   leadId?: string;
   leadName?: string;
+  customerId?: string;
+  customerName?: string;
 };
 
 type CallContextValue = {
