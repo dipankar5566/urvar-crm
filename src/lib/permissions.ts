@@ -17,6 +17,7 @@ export type Module =
   | "leads"
   | "pipeline"
   | "calls"
+  | "ai_calls"
   | "followups"
   | "tasks"
   | "customers"
@@ -43,6 +44,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     leads: FULL,
     pipeline: FULL,
     calls: FULL,
+    ai_calls: FULL,
     followups: FULL,
     tasks: FULL,
     customers: FULL,
@@ -56,6 +58,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     leads: { read: "all", write: "all", delete: "all" },
     pipeline: { read: "all", write: "all", delete: "none" },
     calls: { read: "all", write: "all", delete: "none" },
+    ai_calls: { read: "all", write: "all", delete: "none" },
     followups: { read: "all", write: "all", delete: "none" },
     tasks: { read: "all", write: "all", delete: "none" },
     customers: { read: "all", write: "all", delete: "none" },
@@ -69,6 +72,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     leads: OWN_RW,
     pipeline: OWN_RW,
     calls: OWN_RW,
+    ai_calls: OWN_RW,
     followups: OWN_RW,
     tasks: OWN_RW,
     customers: OWN_RW,
@@ -82,6 +86,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     leads: TERRITORY_R,
     pipeline: TERRITORY_R,
     calls: { read: "own", write: "own", delete: "none" },
+    ai_calls: NONE,
     followups: { read: "own", write: "own", delete: "none" },
     tasks: { read: "own", write: "own", delete: "none" },
     // Distributor/dealer customers within territory
@@ -96,6 +101,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     leads: READ_ALL,
     pipeline: READ_ALL,
     calls: READ_ALL,
+    ai_calls: READ_ALL,
     followups: READ_ALL,
     tasks: READ_ALL,
     customers: { read: "all", write: "all", delete: "none" }, // financial fields
@@ -130,6 +136,16 @@ export function assertCan(role: Role, module: Module, action: Action): Scope {
  * scope rather than the broader set of roles that can write a single record.
  */
 export function canBulkImport(role: Role): boolean {
+  return role === "SUPER_ADMIN" || role === "SALES_MANAGER";
+}
+
+/**
+ * AI Voice Agent outbound campaigns (Phase 3, not yet built) dial leads
+ * unattended, so CRUD is restricted the same way bulk import is — the two
+ * roles with unrestricted "all" scope, not the broader set of roles that can
+ * initiate a single ai_calls call.
+ */
+export function canManageCampaigns(role: Role): boolean {
   return role === "SUPER_ADMIN" || role === "SALES_MANAGER";
 }
 

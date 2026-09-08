@@ -110,12 +110,28 @@ enum CallOutcome {
   QUOTATION_REQUESTED
   CONVERTED
   WRONG_NUMBER
+  TRANSFERRED_TO_HUMAN
 }
 
 enum CallProvider {
   MANUAL
   TWILIO
   PLIVO
+}
+
+// AI Voice Agent: whether a call is fully human, human-driven with a passive
+// AI transcript/suggestion overlay, or fully AI-driven (no human on the line).
+enum CallMode {
+  HUMAN
+  AI_ASSISTED
+  AI_AUTONOMOUS
+}
+
+enum CallSentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  ESCALATED
 }
 
 enum FollowUpStatus {
@@ -224,6 +240,7 @@ model User {
   ownedLeads       Lead[]                 @relation("LeadOwner")
   ownedCustomers   Customer[]             @relation("CustomerOwner")
   calls            Call[]
+  transferredCalls Call[]                 @relation("CallTransferredTo")
   followUps        FollowUp[]
   assignedTasks    Task[]                 @relation("TaskAssignee")
   createdTasks     Task[]                 @relation("TaskCreator")
@@ -313,6 +330,10 @@ model Lead {
   remarks               String?
   lostReason            String?
 
+  // AI Voice Agent: opt-out enforced by the outbound campaign scheduler (Phase 3)
+  doNotCall       Boolean @default(false)
+  doNotCallReason String?
+
   // Phase-2 hooks (free, nullable)
   whatsappOptIn         Boolean?
   leadScore             Int?
@@ -391,8 +412,9 @@ model Call {
   lead            Lead?         @relation(fields: [leadId], references: [id], onDelete: Cascade)
   customerId      String?
   customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  userId          String
-  user            User          @relation(fields: [userId], references: [id])
+  // Nullable: an AI_AUTONOMOUS call (Phase 2+) has no human on the line.
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id])
   direction       CallDirection @default(OUTBOUND)
   outcome         CallOutcome?
   durationSeconds Int?
@@ -409,9 +431,27 @@ model Call {
   fromNumber      String?
   toNumber        String?
 
+  // AI Voice Agent (Phase 0+): AI transcript/outcome metadata, supplementary
+  // to the human-picked outcome/notes above — never overwrites them.
+  callMode        CallMode       @default(HUMAN)
+  transcript      Json?
+  aiSummary       String?
+  aiSentiment     CallSentiment?
+  aiIntentTags    String[]       @default([])
+  aiAgentVersion  String?
+
+  // Live-transfer handoff target (Phase 2)
+  transferredToUserId String?
+  transferredToUser   User?    @relation("CallTransferredTo", fields: [transferredToUserId], references: [id])
+
+  // Flag-for-callback handoff (Phase 2): the FollowUp task the AI created
+  followUpId String?   @unique
+  followUp   FollowUp? @relation(fields: [followUpId], references: [id])
+
   @@index([leadId])
   @@index([customerId])
   @@index([userId, calledAt])
+  @@index([callMode])
 }
 
 model FollowUp {
@@ -430,6 +470,9 @@ model FollowUp {
   reminderSentAt DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+
+  // AI Voice Agent (Phase 2): the call that flagged this callback, if any
+  call Call?
 
   @@index([assignedToId, dueAt])
   @@index([status])

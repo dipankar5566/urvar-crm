@@ -117,7 +117,13 @@ export default async function CallsPage({
                 <TableCell className="max-w-60 truncate text-muted-foreground">
                   {call.notes ?? "—"}
                 </TableCell>
-                {showRep && <TableCell>{call.user.name}</TableCell>}
+                {showRep && (
+                  <TableCell>
+                    {call.user?.name ?? (
+                      <span className="text-muted-foreground">AI Agent</span>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell className="text-muted-foreground">
                   {format(call.calledAt, "d MMM yyyy, h:mm a")}
                 </TableCell>

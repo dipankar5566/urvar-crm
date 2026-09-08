@@ -390,7 +390,13 @@ export default async function CustomerDetailPage({
                         <TableCell className="max-w-60 truncate text-muted-foreground">
                           {call.notes ?? "—"}
                         </TableCell>
-                        {showCallRep && <TableCell>{call.user.name}</TableCell>}
+                        {showCallRep && (
+                          <TableCell>
+                            {call.user?.name ?? (
+                              <span className="text-muted-foreground">AI Agent</span>
+                            )}
+                          </TableCell>
+                        )}
                         <TableCell className="text-muted-foreground">
                           {format(call.calledAt, "d MMM yyyy, h:mm a")}
                         </TableCell>
