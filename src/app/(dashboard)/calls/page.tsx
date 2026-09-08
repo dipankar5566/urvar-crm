@@ -69,12 +69,13 @@ export default async function CallsPage({
               <TableHead>Notes</TableHead>
               {showRep && <TableHead>Rep</TableHead>}
               <TableHead>Called At</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {calls.length === 0 && (
               <TableRow>
-                <TableCell colSpan={showRep ? 8 : 7} className="text-center text-muted-foreground">
+                <TableCell colSpan={showRep ? 9 : 8} className="text-center text-muted-foreground">
                   No calls logged yet.
                 </TableCell>
               </TableRow>
@@ -126,6 +127,13 @@ export default async function CallsPage({
                 )}
                 <TableCell className="text-muted-foreground">
                   {format(call.calledAt, "d MMM yyyy, h:mm a")}
+                </TableCell>
+                <TableCell>
+                  {call.callMode !== "HUMAN" && (
+                    <Link href={`/calls/${call.id}`} className="text-xs text-primary hover:underline">
+                      AI Details
+                    </Link>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

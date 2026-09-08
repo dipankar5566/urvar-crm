@@ -24,6 +24,8 @@ type ActiveCall = {
   leadName?: string;
   customerId?: string;
   customerName?: string;
+  /** AI Voice Agent (Phase 1): whether this call has the live-assist overlay enabled. */
+  aiAssist?: boolean;
 };
 
 type CallContextValue = {

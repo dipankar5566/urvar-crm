@@ -27,6 +27,7 @@ import { LeadAssigneeSelect } from "./lead-assignee-select";
 import { ConvertButton } from "./convert-button";
 import { LogCallDialog } from "./log-call-dialog";
 import { CallButton } from "./call-button";
+import { AiCallButton } from "./ai-call-button";
 import { ScheduleFollowUpDialog } from "./schedule-follow-up-dialog";
 import { TaskForm } from "../../tasks/task-form";
 
@@ -75,6 +76,8 @@ export default async function LeadDetailPage({
   const canWrite = writeScope !== "none";
   const canAssign = writeScope === "all" || writeScope === "territory";
   const canLogCalls = can(user.role, "calls", "write") !== "none";
+  const canAiAssist = can(user.role, "ai_calls", "read") !== "none";
+  const canAiCall = can(user.role, "ai_calls", "write") !== "none";
   const canScheduleFollowUps = can(user.role, "followups", "write") !== "none";
   const canCreateTasks = can(user.role, "tasks", "write") !== "none";
   const taskAssignScope = can(user.role, "tasks", "write");
@@ -116,7 +119,11 @@ export default async function LeadDetailPage({
               leadId={lead.id}
               leadName={lead.name}
               className="w-auto justify-center"
+              canAiAssist={canAiAssist}
             />
+          )}
+          {canAiCall && !lead.doNotCall && (
+            <AiCallButton leadId={lead.id} className="w-auto justify-center" />
           )}
           {canWrite && (
             <Button variant="outline" size="sm" render={<Link href={`/leads/${lead.id}/edit`} />}>

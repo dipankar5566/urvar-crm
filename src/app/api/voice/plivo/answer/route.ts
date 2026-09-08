@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
         },
       })
     : null;
+  const voiceAgentUrl = process.env.VOICE_AGENT_PUBLIC_URL;
   const phone = toE164(call?.lead?.phone ?? call?.customer?.phone ?? null);
 
   // Single-use authorization: `callId` is an unguessable cuid generated
@@ -76,6 +77,19 @@ export async function POST(req: NextRequest) {
     startOnDialAnswer: "true",
     fileFormat: "mp3",
   });
+  // AI Voice Agent (Phase 1): a passive, unidirectional stream of both call
+  // legs to the voice-agent process for live transcription — the AI never
+  // speaks on this path, a human still does the whole call via <Dial> below.
+  // callId travels in the URL query string rather than Plivo's `extraHeaders`
+  // (its exact header-delivery mechanics on <Stream> aren't confirmed — see
+  // plan's Phase 1 note), which is guaranteed to work since it's a plain URL.
+  if (call.callMode === "AI_ASSISTED" && voiceAgentUrl) {
+    response.addStream(`${voiceAgentUrl}/plivo-stream?callId=${call.id}`, {
+      bidirectional: false,
+      audioTrack: "both",
+      contentType: "audio/x-l16;rate=16000",
+    });
+  }
   const dial = response.addDial({
     callerId: process.env.PLIVO_CALLER_ID,
     callbackUrl: `${origin}/api/voice/plivo/status?callId=${call.id}`,

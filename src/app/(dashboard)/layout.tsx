@@ -5,6 +5,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { getRecentNotifications } from "@/components/layout/notification-actions";
 import { CallProvider } from "@/components/calling/call-provider";
 import { ActiveCallBar } from "@/components/calling/active-call-bar";
+import { LiveAssistPanel } from "@/components/calling/live-assist-panel";
 import { GlobalSearchProvider } from "@/components/search/global-search";
 
 export default async function DashboardLayout({
@@ -31,7 +32,12 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
-      {canCall && <ActiveCallBar />}
+      {canCall && (
+        <>
+          <ActiveCallBar />
+          <LiveAssistPanel />
+        </>
+      )}
     </div>
   );
 

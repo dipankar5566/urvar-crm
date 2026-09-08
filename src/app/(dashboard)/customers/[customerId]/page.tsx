@@ -85,6 +85,7 @@ export default async function CustomerDetailPage({
 
   const canWrite = can(user.role, "customers", "write") !== "none";
   const canLogCalls = can(user.role, "calls", "write") !== "none";
+  const canAiAssist = can(user.role, "ai_calls", "read") !== "none";
   const canViewCalls = callScope !== "none";
   const showCallRep = callScope === "all";
   const isDealerType = customer.dealerTier !== null || customer.territoryAssigned !== null;
@@ -112,6 +113,7 @@ export default async function CustomerDetailPage({
               customerId={customer.id}
               customerName={customer.name}
               className="w-auto justify-center"
+              canAiAssist={canAiAssist}
             />
           )}
           {canWrite && (

@@ -1,4 +1,12 @@
-import plivo from "plivo";
+// Namespace import, not default — confirmed via isolated repro that
+// `import plivo from "plivo"` resolves to `undefined` when this file is
+// loaded through voice-agent's tsx/CJS-interop bridge (Node's ESM->CJS
+// loader path for a nested .ts import), even though the same default
+// import works fine under Next.js's own bundler. A namespace import
+// resolves correctly in both contexts since every usage below is a
+// property access (`plivo.Client`, `plivo.validateV3Signature`), never a
+// direct call of `plivo` itself.
+import * as plivo from "plivo";
 import { createHash, randomBytes } from "crypto";
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";

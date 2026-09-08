@@ -149,6 +149,19 @@ export const CALL_DIRECTION_LABELS: Record<string, string> = {
   OUTBOUND: "Outbound",
 };
 
+export const CALL_MODE_LABELS: Record<string, string> = {
+  HUMAN: "Human",
+  AI_ASSISTED: "AI Assisted",
+  AI_AUTONOMOUS: "AI Autonomous",
+};
+
+export const CALL_SENTIMENT_LABELS: Record<string, string> = {
+  POSITIVE: "Positive",
+  NEUTRAL: "Neutral",
+  NEGATIVE: "Negative",
+  ESCALATED: "Escalated",
+};
+
 export const FOLLOWUP_STATUS_LABELS: Record<string, string> = {
   PENDING: "Pending",
   COMPLETED: "Completed",
