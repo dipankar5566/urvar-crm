@@ -8,9 +8,9 @@ import { callOutcomeUpdateSchema, type CallOutcomeUpdateInput } from "@/lib/vali
 
 type ActionResult = { error: string } | { success: true; id?: string };
 
-/** Creates a pending Call row for an in-browser Twilio call. The browser only
+/** Creates a pending Call row for an in-browser Plivo call. The browser only
  * ever passes back this row's id — the actual phone number is resolved
- * server-side in the TwiML webhook, never trusted from the client. */
+ * server-side in the answer_url webhook, never trusted from the client. */
 export async function initiateCall(
   target: { leadId: string } | { customerId: string },
 ): Promise<ActionResult> {
@@ -30,7 +30,7 @@ export async function initiateCall(
         leadId: target.leadId,
         userId: user.id,
         direction: "OUTBOUND",
-        provider: "TWILIO",
+        provider: "PLIVO",
       },
     });
 
@@ -49,7 +49,7 @@ export async function initiateCall(
       customerId: target.customerId,
       userId: user.id,
       direction: "OUTBOUND",
-      provider: "TWILIO",
+      provider: "PLIVO",
     },
   });
 
@@ -84,7 +84,7 @@ export async function completeVoiceCall(
       data: {
         leadId: existing.leadId,
         type: "CALL_LOGGED",
-        description: `Outbound call (Twilio) — ${data.outcome.replaceAll("_", " ")}.`,
+        description: `Outbound call (Plivo) — ${data.outcome.replaceAll("_", " ")}.`,
         createdById: user.id,
       },
     });

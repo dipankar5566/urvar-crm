@@ -115,6 +115,7 @@ enum CallOutcome {
 enum CallProvider {
   MANUAL
   TWILIO
+  PLIVO
 }
 
 enum FollowUpStatus {
@@ -205,6 +206,12 @@ model User {
   territoryStates String[] @default([])
   isActive        Boolean  @default(true)
   lastLoginAt     DateTime?
+
+  // Plivo Voice: persistent SIP Endpoint credentials for in-browser calling,
+  // created lazily on first call and reused (unlike Twilio's ephemeral tokens).
+  plivoEndpointId        String?
+  plivoUsername          String? @unique
+  plivoPasswordEncrypted String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -393,7 +400,7 @@ model Call {
   calledAt        DateTime      @default(now())
   createdAt       DateTime      @default(now())
 
-  // Twilio Voice (in-browser calling) fields — null/MANUAL for Sprint 2 manual logs
+  // Provider Voice (in-browser calling) fields — null/MANUAL for Sprint 2 manual logs
   provider        CallProvider  @default(MANUAL)
   providerCallSid String?       @unique
   providerStatus  String?

@@ -16,28 +16,31 @@ function recordingFilePath(recordingSid: string): string {
 }
 
 /**
- * Downloads a completed Twilio recording (which otherwise requires Twilio
- * Basic Auth and is subject to Twilio's own retention) into local disk
- * storage, and returns the path our own route handler serves it from.
+ * Downloads a completed Plivo recording (which otherwise requires Plivo
+ * Basic Auth — must be enabled in Console > Voice > Other Voice Settings >
+ * "Basic Auth For Recording URLs", off by default — and is subject to
+ * Plivo's own retention) into local disk storage, and returns the path our
+ * own route handler serves it from.
  */
 export async function saveRecordingLocally(
-  recordingSid: string,
-  twilioRecordingUrl: string,
+  recordingId: string,
+  plivoRecordingUrl: string,
 ): Promise<string> {
-  const auth = Buffer.from(`${env("TWILIO_ACCOUNT_SID")}:${env("TWILIO_AUTH_TOKEN")}`).toString(
-    "base64",
-  );
-  const res = await fetch(`${twilioRecordingUrl}.mp3`, {
+  const auth = Buffer.from(`${env("PLIVO_AUTH_ID")}:${env("PLIVO_AUTH_TOKEN")}`).toString("base64");
+  const url = /\.(mp3|wav)$/i.test(plivoRecordingUrl)
+    ? plivoRecordingUrl
+    : `${plivoRecordingUrl}.mp3`;
+  const res = await fetch(url, {
     headers: { Authorization: `Basic ${auth}` },
   });
   if (!res.ok) {
-    throw new Error(`Failed to download Twilio recording ${recordingSid}: ${res.status}`);
+    throw new Error(`Failed to download Plivo recording ${recordingId}: ${res.status}`);
   }
 
   await mkdir(recordingsDir(), { recursive: true });
-  await writeFile(recordingFilePath(recordingSid), Buffer.from(await res.arrayBuffer()));
+  await writeFile(recordingFilePath(recordingId), Buffer.from(await res.arrayBuffer()));
 
-  return `/api/voice/recordings/${recordingSid}`;
+  return `/api/voice/recordings/${recordingId}`;
 }
 
 export async function readRecordingFile(recordingSid: string): Promise<Buffer> {

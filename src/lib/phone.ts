@@ -1,6 +1,6 @@
 /**
  * Leads/customers are entered as plain 10-digit Indian mobile numbers (see
- * lib/validations/lead.ts, customer.ts). Twilio's <Dial><Number> requires
+ * lib/validations/lead.ts, customer.ts). Plivo's <Dial><Number> requires
  * E.164 to route a PSTN call reliably, so callers must be normalized here
  * before dialing.
  */

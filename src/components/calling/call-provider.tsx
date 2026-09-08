@@ -9,7 +9,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Device, type Call } from "@twilio/voice-sdk";
+// Type-only import — the runtime module references `window` at load time and
+// must never be statically imported, or "use client" SSR evaluation crashes
+// with "ReferenceError: window is not defined". Loaded via dynamic import()
+// inside the client-only useEffect below instead.
+import type Plivo from "plivo-browser-sdk";
 import { toast } from "sonner";
 
 export type CallStatus = "idle" | "connecting" | "in-progress" | "wrapping-up";
@@ -42,16 +46,27 @@ export function useCall(): CallContextValue {
   return ctx;
 }
 
+type PlivoClient = InstanceType<typeof Plivo>["client"];
+
+/** Minimal shape of what Plivo's call lifecycle events pass their listener —
+ * not independently confirmed against a live call; verify on first test call. */
+type PlivoCallInfo = { callUUID?: string; reason?: string; code?: number };
+
 export function CallProvider({ children }: { children: ReactNode }) {
-  const deviceRef = useRef<Device | null>(null);
-  const callRef = useRef<Call | null>(null);
+  const clientRef = useRef<PlivoClient | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeCallRef = useRef<ActiveCall | null>(null);
 
   const [deviceReady, setDeviceReady] = useState(false);
   const [status, setStatus] = useState<CallStatus>("idle");
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+
+  const setActiveCallBoth = useCallback((value: ActiveCall | null) => {
+    activeCallRef.current = value;
+    setActiveCall(value);
+  }, []);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -66,25 +81,44 @@ export function CallProvider({ children }: { children: ReactNode }) {
     async function setup() {
       const res = await fetch("/api/voice/token");
       if (!res.ok || cancelled) return;
-      const { token } = await res.json();
+      const { username, password } = await res.json();
 
-      const device = new Device(token, { logLevel: "warn" });
-      deviceRef.current = device;
+      const { default: PlivoCtor } = await import("plivo-browser-sdk");
+      const sdk = new PlivoCtor({ debug: "WARN", permOnClick: true });
+      const client = sdk.client;
+      clientRef.current = client;
 
-      device.on("registered", () => setDeviceReady(true));
-      device.on("unregistered", () => setDeviceReady(false));
-      device.on("error", (err) => {
-        toast.error(`Calling error: ${err.message}`);
+      // Unlike Twilio's per-call `Call` object, the Browser SDK v2 reports
+      // call state via these GLOBAL client events — safe here because the
+      // app only ever allows one active call at a time (see startCall).
+      client.on("onLogin", () => setDeviceReady(true));
+      client.on("onLoginFailed", () => {
+        setDeviceReady(false);
+        toast.error("Calling could not connect — try refreshing the page.");
       });
-      device.on("tokenWillExpire", async () => {
-        const r = await fetch("/api/voice/token");
-        if (r.ok) {
-          const { token: newToken } = await r.json();
-          device.updateToken(newToken);
-        }
+      client.on("onLogout", () => setDeviceReady(false));
+
+      client.on("onCalling", () => setStatus("connecting"));
+      client.on("onCallRemoteRinging", () => setStatus("connecting"));
+      client.on("onCallAnswered", () => {
+        setStatus("in-progress");
+        stopTimer();
+        timerRef.current = setInterval(() => {
+          setDurationSeconds((d) => d + 1);
+        }, 1000);
+      });
+      client.on("onCallTerminated", () => {
+        stopTimer();
+        setStatus("wrapping-up");
+      });
+      client.on("onCallFailed", (info?: PlivoCallInfo) => {
+        stopTimer();
+        toast.error(`Call error: ${info?.reason || "unknown error"}`);
+        setStatus("idle");
+        setActiveCallBoth(null);
       });
 
-      await device.register();
+      client.login(username, password);
     }
 
     setup();
@@ -92,80 +126,63 @@ export function CallProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       stopTimer();
-      deviceRef.current?.destroy();
-      deviceRef.current = null;
+      clientRef.current?.logout();
+      clientRef.current = null;
     };
-  }, [stopTimer]);
+  }, [stopTimer, setActiveCallBoth]);
 
   const startCall = useCallback(
     (params: ActiveCall) => {
-      const device = deviceRef.current;
-      if (!device || !deviceReady) {
+      const client = clientRef.current;
+      if (!client || !deviceReady) {
         toast.error("Calling isn't ready yet — try again in a moment.");
         return;
       }
-      if (callRef.current) {
+      if (activeCallRef.current) {
         toast.error("A call is already in progress.");
         return;
       }
 
-      setActiveCall(params);
+      setActiveCallBoth(params);
       setStatus("connecting");
       setDurationSeconds(0);
       setIsMuted(false);
 
-      device
-        .connect({ params: { callId: params.callId } })
-        .then((call) => {
-          callRef.current = call;
-          call.on("accept", () => {
-            setStatus("in-progress");
-            stopTimer();
-            timerRef.current = setInterval(() => {
-              setDurationSeconds((d) => d + 1);
-            }, 1000);
-          });
-          call.on("disconnect", () => {
-            stopTimer();
-            callRef.current = null;
-            setStatus("wrapping-up");
-          });
-          call.on("cancel", () => {
-            stopTimer();
-            callRef.current = null;
-            setStatus("idle");
-            setActiveCall(null);
-          });
-          call.on("error", (err) => {
-            toast.error(`Call error: ${err.message}`);
-          });
-        })
-        .catch((err: Error) => {
-          toast.error(`Could not start call: ${err.message}`);
-          setStatus("idle");
-          setActiveCall(null);
-        });
+      // The destination argument below is never actually dialed — the
+      // server-side answer_url XML resolves who to call from `callId`,
+      // never trusting a client-supplied phone number. Plivo's call()
+      // still requires *some* string here, so we pass the callId itself.
+      const ok = client.call(params.callId, { "X-PH-CallId": params.callId });
+      if (!ok) {
+        toast.error("Could not start call.");
+        setStatus("idle");
+        setActiveCallBoth(null);
+      }
     },
-    [deviceReady, stopTimer],
+    [deviceReady, setActiveCallBoth],
   );
 
   const hangUp = useCallback(() => {
-    callRef.current?.disconnect();
+    clientRef.current?.hangup();
   }, []);
 
   const toggleMute = useCallback(() => {
-    const call = callRef.current;
-    if (!call) return;
+    const client = clientRef.current;
+    if (!client) return;
     const next = !isMuted;
-    call.mute(next);
+    if (next) {
+      client.mute();
+    } else {
+      client.unmute();
+    }
     setIsMuted(next);
   }, [isMuted]);
 
   const dismiss = useCallback(() => {
     setStatus("idle");
-    setActiveCall(null);
+    setActiveCallBoth(null);
     setDurationSeconds(0);
-  }, []);
+  }, [setActiveCallBoth]);
 
   return (
     <CallContext.Provider
