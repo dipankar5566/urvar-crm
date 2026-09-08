@@ -9,7 +9,7 @@ dealers, retailers, FPOs, government tenders, and farmers).
 
 - **Next.js 16** (App Router, TypeScript) — full-stack, Server Actions + Route Handlers
 - **Prisma 7** ORM with the `@prisma/adapter-pg` driver adapter
-- **PostgreSQL** (local, portable install — see below)
+- **PostgreSQL** (standard Windows service on this machine — see below)
 - **Better Auth** — email/password auth with role-based session
 - **Tailwind CSS v4 + shadcn/ui** (Base UI under the hood)
 - **next-themes** — dark mode
@@ -19,18 +19,12 @@ dealers, retailers, FPOs, government tenders, and farmers).
 - Node.js 20+
 - PostgreSQL 17 running on `localhost:5432`
 
-### Portable PostgreSQL (this machine)
+### PostgreSQL (this machine)
 
-Postgres is installed as a **portable, no-admin instance** at
-`D:\PostgresPortable` (binaries + data live outside the repo). It is **not** a
-Windows service, so it must be started after a reboot:
-
-```powershell
-npm run pg:start    # start the database
-npm run pg:stop     # stop the database
-```
-
-Connection: `postgresql://postgres:postgres@localhost:5432/urvar_crm`
+Postgres runs as the standard `postgresql-x64-18` Windows service
+(Automatic startup — no manual start/stop needed after a reboot). This same
+database instance serves both local dev and production (`urvar_crm` on
+`localhost:5432`), shared with the PM2-hosted deployment — see `CLAUDE.md`.
 
 ## Setup
 
@@ -81,8 +75,6 @@ src/
     permissions.ts       # RBAC matrix + can() + scopeWhere()
     constants/           # territories, enum labels, nav config
   middleware.ts          # coarse auth gating
-scripts/
-  pg-start.ps1 / pg-stop.ps1
 ```
 
 ## RBAC

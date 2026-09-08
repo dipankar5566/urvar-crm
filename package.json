@@ -13,9 +13,7 @@
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:clean-demo": "tsx prisma/clean-demo-data.ts",
-    "db:studio": "prisma studio",
-    "pg:start": "powershell -ExecutionPolicy Bypass -File scripts/pg-start.ps1",
-    "pg:stop": "powershell -ExecutionPolicy Bypass -File scripts/pg-stop.ps1"
+    "db:studio": "prisma studio"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
