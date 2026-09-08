@@ -30,7 +30,11 @@ export async function POST(req: NextRequest) {
   const recordingId = params.RecordingID || null;
   const recordingUrl = params.RecordUrl || null;
 
-  let savedPath: string | null = recordingUrl;
+  // On download failure, leave `recordingUrl` null rather than falling back
+  // to the raw external Plivo URL — the UI only renders our own
+  // `/api/voice/recordings/...` path, so a raw URL would silently look like
+  // "no recording" with no trace of the failure beyond this log line.
+  let savedPath: string | null = null;
   if (recordingId && recordingUrl) {
     try {
       savedPath = await saveRecordingLocally(recordingId, recordingUrl);

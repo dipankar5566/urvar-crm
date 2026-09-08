@@ -64,8 +64,14 @@ export async function POST(req: NextRequest) {
   const origin = new URL(url).origin;
   response.addSpeak("This call may be recorded for quality and training purposes.");
   // Recording is a sibling element in Plivo XML, not nested under Dial.
+  // `startOnDialAnswer` means the real completion payload (actual RecordUrl/
+  // RecordingID/duration) arrives on `callbackUrl`, not `action` — `action`
+  // only ever gets the initial `RecordingDuration: "-1"` ping. Both must
+  // point here or the real recording data is silently dropped by Plivo.
   response.addRecord({
     action: `${origin}/api/voice/plivo/recording?callId=${call.id}`,
+    callbackUrl: `${origin}/api/voice/plivo/recording?callId=${call.id}`,
+    callbackMethod: "POST",
     redirect: "false",
     startOnDialAnswer: "true",
     fileFormat: "mp3",

@@ -27,9 +27,8 @@ export async function saveRecordingLocally(
   plivoRecordingUrl: string,
 ): Promise<string> {
   const auth = Buffer.from(`${env("PLIVO_AUTH_ID")}:${env("PLIVO_AUTH_TOKEN")}`).toString("base64");
-  const url = /\.(mp3|wav)$/i.test(plivoRecordingUrl)
-    ? plivoRecordingUrl
-    : `${plivoRecordingUrl}.mp3`;
+  const withoutQuery = plivoRecordingUrl.split("?")[0];
+  const url = /\.(mp3|wav)$/i.test(withoutQuery) ? plivoRecordingUrl : `${plivoRecordingUrl}.mp3`;
   const res = await fetch(url, {
     headers: { Authorization: `Basic ${auth}` },
   });
