@@ -246,6 +246,8 @@ model User {
   createdTasks     Task[]                 @relation("TaskCreator")
   createdQuotations Quotation[]           @relation("QuotationCreator")
   createdOrders    Order[]                @relation("OrderCreator")
+  createdSuppliers        Supplier[]        @relation("SupplierCreator")
+  createdPurchaseInvoices PurchaseInvoice[] @relation("PurchaseInvoiceCreator")
   leadActivities   LeadActivity[]
   pipelineMoves    PipelineStageHistory[]
   uploadedFiles    File[]
@@ -337,6 +339,12 @@ model Lead {
   // Phase-2 hooks (free, nullable)
   whatsappOptIn         Boolean?
   leadScore             Int?
+  // BCP-47 code (e.g. "bn-IN") of the language this lead actually spoke on a
+  // call, detected via Sarvam's /text-lid. Lets the next call open in their
+  // language instead of the Lead.state guess in tts-language.ts, which is
+  // only a proxy and is wrong for anyone who has moved states. Mirrors the
+  // (still unused) Customer.preferredLanguage.
+  preferredLanguage     String?
 
   assignedToId String?
   assignedTo   User?   @relation("LeadOwner", fields: [assignedToId], references: [id])
@@ -574,6 +582,7 @@ model Product {
   updatedAt        DateTime        @updatedAt
 
   quotationItems QuotationItem[]
+  purchaseItems  PurchaseInvoiceItem[]
 
   @@index([category])
 }
@@ -700,9 +709,85 @@ model File {
   relatedCustomer    Customer?    @relation(fields: [relatedCustomerId], references: [id], onDelete: Cascade)
   relatedQuotationId String?
   relatedQuotation   Quotation?   @relation(fields: [relatedQuotationId], references: [id], onDelete: Cascade)
+  // The scanned supplier invoice this record was created from.
+  relatedPurchaseInvoiceId String?
+  relatedPurchaseInvoice   PurchaseInvoice? @relation(fields: [relatedPurchaseInvoiceId], references: [id], onDelete: Cascade)
   uploadedById       String
   uploadedBy         User         @relation(fields: [uploadedById], references: [id])
   createdAt          DateTime     @default(now())
 
   @@index([relatedQuotationId])
+  @@index([relatedLeadId])
+  @@index([relatedCustomerId])
+  @@index([relatedPurchaseInvoiceId])
+}
+
+/// Procurement — the inbound side of the business. Everything else in this
+/// schema is outbound (Quotation -> Order); these three models are the only
+/// record of what Urvar buys, and exist so a scanned supplier invoice has
+/// somewhere to land. Visible to SUPER_ADMIN and ACCOUNTS_TEAM only: supplier
+/// prices reveal margin, so the `purchases` module grants sales roles nothing.
+model Supplier {
+  id            String            @id @default(cuid())
+  supplierCode  String            @unique
+  name          String
+  contactPerson String?
+  phone         String?
+  email         String?
+  gstNumber     String?
+  address       String?
+  state         String?
+  district      String?
+  isActive      Boolean           @default(true)
+  notes         String?
+  invoices      PurchaseInvoice[]
+  createdById   String
+  createdBy     User              @relation("SupplierCreator", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([name])
+}
+
+model PurchaseInvoice {
+  id            String   @id @default(cuid())
+  /// The supplier's own invoice number, not ours — so it is unique per
+  /// supplier rather than globally. Two suppliers may both issue "INV-001".
+  invoiceNumber String
+  supplierId    String
+  supplier      Supplier @relation(fields: [supplierId], references: [id])
+  invoiceDate   DateTime
+  subtotal      Decimal  @default(0) @db.Decimal(14, 2)
+  taxAmount     Decimal  @default(0) @db.Decimal(14, 2)
+  totalAmount   Decimal  @db.Decimal(14, 2)
+  notes         String?
+  items         PurchaseInvoiceItem[]
+  files         File[]
+  createdById   String
+  createdBy     User     @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  /// Re-entering the same invoice for the same supplier is a mistake, and
+  /// the likeliest one when invoices are captured by photographing them.
+  @@unique([supplierId, invoiceNumber])
+  @@index([invoiceDate])
+}
+
+model PurchaseInvoiceItem {
+  id          String          @id @default(cuid())
+  invoiceId   String
+  invoice     PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// Optional, unlike QuotationItem.productId: a supplier invoice lists what
+  /// THEY sell, which often will not match a row in our Product catalogue.
+  /// Forcing a match would make such an invoice impossible to record, so the
+  /// raw `description` is always kept and the link is made when it can be.
+  productId   String?
+  product     Product?        @relation(fields: [productId], references: [id])
+  description String
+  quantity    Decimal         @db.Decimal(12, 2)
+  unitPrice   Decimal         @db.Decimal(12, 2)
+  lineTotal   Decimal         @db.Decimal(14, 2)
+
+  @@index([invoiceId])
 }
