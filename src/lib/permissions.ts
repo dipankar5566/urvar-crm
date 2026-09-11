@@ -23,6 +23,7 @@ export type Module =
   | "customers"
   | "quotations"
   | "products"
+  | "purchases"
   | "reports"
   | "users"
   | "audit";
@@ -50,6 +51,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: FULL,
     quotations: FULL,
     products: FULL,
+    purchases: FULL,
     reports: READ_ALL,
     users: FULL,
     audit: READ_ALL,
@@ -64,6 +66,9 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: { read: "all", write: "all", delete: "none" },
     quotations: { read: "all", write: "all", delete: "none" },
     products: { read: "all", write: "all", delete: "none" },
+    // Supplier prices reveal margin: a sales role that can see both the
+    // purchase price and the quoted price knows the markup on every deal.
+    purchases: NONE,
     reports: READ_ALL,
     users: NONE,
     audit: NONE,
@@ -78,6 +83,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: OWN_RW,
     quotations: OWN_RW,
     products: READ_ALL,
+    purchases: NONE,
     reports: { read: "own", write: "none", delete: "none" },
     users: NONE,
     audit: NONE,
@@ -93,6 +99,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: { read: "territory", write: "territory", delete: "none" },
     quotations: TERRITORY_R,
     products: READ_ALL,
+    purchases: NONE,
     reports: TERRITORY_R,
     users: NONE,
     audit: NONE,
@@ -107,6 +114,8 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: { read: "all", write: "all", delete: "none" }, // financial fields
     quotations: { read: "all", write: "all", delete: "none" }, // status/payment
     products: READ_ALL,
+    // Procurement is finance's job — deleting an invoice is not, so no delete.
+    purchases: { read: "all", write: "all", delete: "none" },
     reports: READ_ALL,
     users: NONE,
     audit: NONE,

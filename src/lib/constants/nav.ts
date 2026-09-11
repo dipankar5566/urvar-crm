@@ -31,6 +31,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Distributors", href: "/customers/distributors", icon: "Network", module: "customers", section: "sales" },
   { label: "Products", href: "/products", icon: "Package", module: "products", section: "sales" },
   { label: "Quotations", href: "/quotations", icon: "FileText", module: "quotations", section: "sales" },
+  // Procurement sits under Admin, not Sales: only SUPER_ADMIN and
+  // ACCOUNTS_TEAM have `purchases` read access, so sales roles never see it.
+  { label: "Purchases", href: "/purchases", icon: "Receipt", module: "purchases", section: "admin" },
   { label: "Reports", href: "/reports", icon: "BarChart3", module: "reports", section: "admin" },
   { label: "Users", href: "/users", icon: "Users", module: "users", section: "admin" },
   { label: "Audit Logs", href: "/audit-logs", icon: "ScrollText", module: "audit", section: "admin" },
