@@ -8,6 +8,7 @@
  */
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { PrismaClient } from "../../src/generated/prisma/client.js";
+import { ProductCategory } from "../../src/generated/prisma/enums.js";
 import { plivoClient, getOrCreateEndpoint } from "../../src/lib/plivo.js";
 
 export type ToolContext = {
@@ -80,18 +81,16 @@ export const CRM_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "transfer_to_human",
-      description: "Transfer the live call to a human rep right now — use when the lead explicitly asks for a human, or the conversation is stuck/escalated beyond what you can resolve.",
-      parameters: {
-        type: "object",
-        properties: { reason: { type: "string", description: "Why you're transferring." } },
-        required: ["reason"],
-      },
-    },
-  },
+  // transfer_to_human is deliberately NOT offered to the model right now.
+  // Nobody is manning the browser softphone, and on 2026-09-10 the agent
+  // told a lead "connecting you to our representative now, stay on the
+  // line" while `transferredToUserId` stayed null — the transfer never
+  // happened and the lead was left holding. The executeCrmTool case below
+  // and api/voice/plivo/transfer/route.ts are intentionally left intact:
+  // re-add the schema here once a rep is actually logged in to receive
+  // calls AND the route has been verified end-to-end (it has no logging
+  // today, so the earlier failure could not be traced). Until then the
+  // system prompt routes these requests to schedule_follow_up instead.
   {
     type: "function",
     function: {
@@ -148,18 +147,39 @@ export async function executeCrmTool(
 
     case "get_product_info": {
       const query = String(args.query ?? "");
+      // Prisma validates enum values at the DB-client level — passing an
+      // arbitrary uppercased string here throws PrismaClientValidationError
+      // if it isn't one of the real ProductCategory values (confirmed live:
+      // the model searched "general organic fertilizer", not a real
+      // category, and the whole tool call failed). Only add the category
+      // branch when the query actually matches a known category.
+      const categoryGuess = query.toUpperCase().replace(/[\s-]+/g, "_");
+      const matchedCategory = (Object.values(ProductCategory) as string[]).includes(categoryGuess)
+        ? (categoryGuess as ProductCategory)
+        : null;
+
       const products = await ctx.prisma.product.findMany({
         where: {
           isActive: true,
           OR: [
             { name: { contains: query, mode: "insensitive" } },
-            { category: { equals: query.toUpperCase() as never } },
+            ...(matchedCategory ? [{ category: matchedCategory }] : []),
           ],
         },
         select: { name: true, category: true, unit: true, packSize: true, mrp: true, description: true },
         take: 5,
       });
-      return { output: { products } };
+
+      // Never hand the model a price it shouldn't say. An unset MRP is 0 in
+      // the DB, and on 2026-09-10 the agent dutifully told a customer "the
+      // system shows MRP 0" for Enriched Vermicompost. Dropping the field
+      // entirely leaves nothing to read out; `priceOnRequest` tells the
+      // model to offer a quotation instead (see the system prompt rule).
+      const safe = products.map(({ mrp, ...rest }) => {
+        const value = mrp == null ? 0 : Number(mrp);
+        return value > 0 ? { ...rest, mrp: value } : { ...rest, priceOnRequest: true };
+      });
+      return { output: { products: safe } };
     }
 
     case "check_quotation_status": {
@@ -238,9 +258,18 @@ export async function executeCrmTool(
 
       // Only create the default wrap-up FollowUp if schedule_follow_up
       // wasn't already explicitly called this session — avoids a duplicate
-      // task when the AI already scheduled one mid-call.
+      // task when the AI already scheduled one mid-call. `call: null` is
+      // required, not just leadId+recency: Call.followUpId is @unique, so a
+      // FollowUp already claimed by an earlier call to the same lead (e.g. a
+      // retry within the hour) would otherwise be picked up here too and
+      // blow up this update with a P2002 unique-constraint error (confirmed
+      // live in logs/voice-agent-error-16.log).
       const existingFollowUp = await ctx.prisma.followUp.findFirst({
-        where: { leadId: ctx.leadId, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
+        where: {
+          leadId: ctx.leadId,
+          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+          call: null,
+        },
         orderBy: { createdAt: "desc" },
       });
 
