@@ -35,9 +35,21 @@ import {
   type ColumnMapping,
   type ValueMapping,
 } from "@/lib/lead-import";
-import { validateImportRows, commitImport, type RowVerdict } from "./actions";
+import { DOCUMENT_COLUMN_MAPPING, DOCUMENT_EXTRACT_FIELDS } from "@/lib/lead-document-extract";
+import {
+  validateImportRows,
+  commitImport,
+  extractLeadFromDocumentAction,
+  type RowVerdict,
+} from "./actions";
 
-type Step = "upload" | "columns" | "values" | "preview" | "done";
+/**
+ * Two ways in, one way through. A spreadsheet goes upload -> columns ->
+ * values -> preview; a document goes upload -> document (check what was
+ * read) -> preview. Both end at the same validate-and-confirm step, so
+ * nothing is written without a human looking at it first.
+ */
+type Step = "upload" | "columns" | "values" | "document" | "preview" | "done";
 
 const LEAD_SOURCE_OPTIONS = Object.values(LeadSource);
 const CUSTOMER_TYPE_OPTIONS = Object.values(CustomerType);
@@ -58,10 +70,51 @@ export function ImportWizard() {
     customerType: {},
   });
 
+  /** Set only on the document path — the stored scan, attached to the lead
+   * on commit so the original stays checkable afterwards. */
+  const [documentFileId, setDocumentFileId] = useState<string | null>(null);
   const [verdicts, setVerdicts] = useState<RowVerdict[]>([]);
   const [summary, setSummary] = useState<{ createdCount: number; skippedCount: number } | null>(
     null,
   );
+
+  /**
+   * Document path. Extraction returns values already keyed by CRM field
+   * name, so there is no column-mapping step — but there IS a review step,
+   * because reading handwriting off a phone photo gets things wrong and the
+   * preview only shows name and phone.
+   */
+  async function handleDocument(file: File) {
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const result = await extractLeadFromDocumentAction(formData);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      if (Object.keys(result.row).length === 0) {
+        toast.error("Nothing could be read from that document. Try a clearer photo.");
+        return;
+      }
+
+      setRawRows([result.row]);
+      setColumnMapping(DOCUMENT_COLUMN_MAPPING);
+      setFileName(file.name);
+      setDocumentFileId(result.fileId);
+      setStep("document");
+    } catch {
+      toast.error("Could not read that document. Please try again.");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  /** Lets a rep correct what was misread before anything is created. */
+  function editExtractedValue(field: string, value: string) {
+    setRawRows(([row]) => [{ ...row, [field]: value }]);
+  }
 
   async function handleFile(file: File) {
     setIsUploading(true);
@@ -158,7 +211,12 @@ export function ImportWizard() {
 
   function confirmImport() {
     startTransition(async () => {
-      const result = await commitImport(rawRows, columnMapping, valueMapping);
+      const result = await commitImport(
+        rawRows,
+        columnMapping,
+        valueMapping,
+        documentFileId ?? undefined,
+      );
       if ("error" in result) {
         toast.error(result.error);
         return;
@@ -176,6 +234,7 @@ export function ImportWizard() {
     setFileName("");
     setColumnMapping({});
     setValueMapping({ source: {}, customerType: {} });
+    setDocumentFileId(null);
     setVerdicts([]);
     setSummary(null);
   }
@@ -187,7 +246,8 @@ export function ImportWizard() {
           {step === "upload" && "1. Upload your file"}
           {step === "columns" && "2. Map columns"}
           {step === "values" && "3. Map values (optional)"}
-          {step === "preview" && "4. Preview & confirm"}
+          {step === "document" && "2. Check what was read"}
+          {step === "preview" && (documentFileId ? "3. Preview & confirm" : "4. Preview & confirm")}
           {step === "done" && "Import complete"}
         </CardTitle>
       </CardHeader>
@@ -215,6 +275,65 @@ export function ImportWizard() {
               }}
             />
             {isUploading && <p className="text-sm text-muted-foreground">Reading file…</p>}
+
+            <div className="border-t pt-4 space-y-3">
+              <div>
+                <p className="text-sm font-medium">Or add one lead from a document</p>
+                <p className="text-sm text-muted-foreground">
+                  A photo of a visiting card, enquiry form or handwritten order. PDF, JPG or
+                  PNG, one document at a time. You&apos;ll check what was read before anything
+                  is created.
+                </p>
+              </div>
+              <Input
+                type="file"
+                accept="application/pdf,image/jpeg,image/png"
+                disabled={isUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleDocument(file);
+                  // Cleared so re-picking the same file still fires onChange.
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {step === "document" && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {fileName} — here&apos;s what was read. Correct anything that looks wrong before
+              continuing; blank fields simply weren&apos;t found in the document.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {DOCUMENT_EXTRACT_FIELDS.map((field) => {
+                const def = IMPORT_FIELD_DEFS.find((d) => d.key === field);
+                if (!def) return null;
+                return (
+                  <div key={field} className="space-y-1.5">
+                    <Label htmlFor={`doc-${field}`}>
+                      {def.label}
+                      {def.required && <span className="text-destructive"> *</span>}
+                    </Label>
+                    <Input
+                      id={`doc-${field}`}
+                      value={rawRows[0]?.[field] ?? ""}
+                      placeholder="Not found"
+                      onChange={(e) => editExtractedValue(field, e.target.value)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-between">
+              <Button variant="outline" size="sm" onClick={reset}>
+                <ArrowLeftIcon /> Start over
+              </Button>
+              <Button size="sm" disabled={isPending} onClick={runValidation}>
+                Continue <ArrowRightIcon />
+              </Button>
+            </div>
           </div>
         )}
 

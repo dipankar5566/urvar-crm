@@ -29,6 +29,8 @@ import { LogCallDialog } from "./log-call-dialog";
 import { CallButton } from "./call-button";
 import { AiCallButton } from "./ai-call-button";
 import { ScheduleFollowUpDialog } from "./schedule-follow-up-dialog";
+import { LeadDocuments } from "./lead-documents";
+import { listLeadDocuments } from "./document-actions";
 import { TaskForm } from "../../tasks/task-form";
 
 function Property({
@@ -81,6 +83,9 @@ export default async function LeadDetailPage({
   const canScheduleFollowUps = can(user.role, "followups", "write") !== "none";
   const canCreateTasks = can(user.role, "tasks", "write") !== "none";
   const taskAssignScope = can(user.role, "tasks", "write");
+  // Re-checks leads:read scope itself, so it is safe even though this page
+  // has already loaded the lead.
+  const leadDocuments = canWrite ? await listLeadDocuments(lead.id) : [];
   const reps =
     canAssign || (canCreateTasks && taskAssignScope === "all")
       ? await prisma.user.findMany({
@@ -269,6 +274,17 @@ export default async function LeadDetailPage({
                   triggerVariant="outline"
                 />
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {canWrite && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Documents</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <LeadDocuments leadId={lead.id} documents={leadDocuments} />
             </CardContent>
           </Card>
         )}
