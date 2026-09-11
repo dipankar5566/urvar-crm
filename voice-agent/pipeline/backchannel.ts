@@ -49,3 +49,34 @@ export function isBackchannel(text: string): boolean {
   if (words.length > 2) return false;
   return words.every((w) => BACKCHANNEL.has(w));
 }
+
+/**
+ * Shortest partial transcript allowed to destroy audio the lead is currently
+ * hearing. `isBackchannel` already absorbs "haan" (4), "achha" (5) and
+ * "bataiye" (7), so this only has to reject a single noise token; 6 is about
+ * two short Latin words, or "দাম কত".
+ *
+ * Exported as a constant precisely so tuning it against the `[turn]` logs is
+ * a one-line change rather than a hunt through the barge-in logic.
+ */
+export const MIN_PARTIAL_COMMIT_CHARS = 6;
+
+export type InterruptClass = "backchannel" | "substantive" | "insufficient";
+
+/**
+ * Classifies a *partial* transcript for barge-in purposes.
+ *
+ * Partials are noisier and shorter than finals and are still being revised,
+ * so this is deliberately one-way conservative: it only ever returns
+ * "substantive" when it is safe to cut the AI off, and everything else waits
+ * for the authoritative final to decide. Note the deliberate consequence of
+ * reusing `isBackchannel`: "haan haan haan" is more than two words, so it
+ * counts as substantive — three acknowledgements while the AI keeps talking
+ * really is someone trying to interrupt.
+ */
+export function classifyInterrupt(text: string, minChars = MIN_PARTIAL_COMMIT_CHARS): InterruptClass {
+  const trimmed = text.trim();
+  if (!trimmed) return "insufficient";
+  if (isBackchannel(trimmed)) return "backchannel";
+  return trimmed.length >= minChars ? "substantive" : "insufficient";
+}

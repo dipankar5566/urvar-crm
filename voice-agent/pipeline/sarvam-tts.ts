@@ -58,6 +58,15 @@ function numericEnv(name: string): number | null {
   return value;
 }
 
+/**
+ * Measured 2026-09-11 against the live API: text -> first audio byte is
+ * ~220-244ms, and sending an immediate `flush` after the text makes no
+ * difference (222/220/244ms without it, 228/238ms with). Sarvam synthesizes
+ * as soon as it has a complete sentence, so flushing earlier buys nothing.
+ * Recorded here so the idea doesn't get re-litigated: the latency worth
+ * chasing is upstream, in how long the model takes to finish its first
+ * sentence, not in this socket.
+ */
 export function createSarvamTtsSession(opts: {
   /** Fixed BCP-47 voice language for this call — see tts-language.ts. */
   languageCode: SarvamTtsLanguage;

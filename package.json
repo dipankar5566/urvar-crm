@@ -16,7 +16,9 @@
     "db:studio": "prisma studio",
     "voice-agent:dev": "tsx watch voice-agent/server.ts",
     "tts:samples": "tsx voice-agent/scripts/tts-samples.ts",
-    "eval:agent": "tsx voice-agent/scripts/eval-agent.ts"
+    "eval:agent": "tsx voice-agent/scripts/eval-agent.ts",
+    "voice:stats": "tsx voice-agent/scripts/transcript-stats.ts",
+    "voice:latency": "tsx voice-agent/scripts/latency-report.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

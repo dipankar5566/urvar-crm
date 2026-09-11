@@ -23,16 +23,36 @@ const SARVAM_STT_URL = "wss://api.sarvam.ai/speech-to-text-realtime/ws";
  * socket which never opens can't accumulate unbounded audio. */
 const MAX_PENDING_CHUNKS = 100;
 
-export type SttTranscript = { text: string; isFinal: boolean };
+export type SttTranscript = {
+  text: string;
+  isFinal: boolean;
+  /** Sarvam's own per-utterance counter, so a caller can tell a late partial
+   * belonging to an utterance it already acted on from a fresh one. */
+  utteranceIdx: number | null;
+  language: string | null;
+};
+
+/** Sarvam runs server-side turn detection (`turn_detection: "vad"`,
+ * threshold 0.3 — visible in its `session.begin` frame), and speech onset
+ * lands here hundreds of milliseconds before the final transcript does. */
+export type SttVadEvent = { utteranceIdx: number | null; confidence: number | null };
 
 export type SarvamSttSession = {
   sendAudio: (chunk: Buffer) => void;
   close: () => void;
 };
 
+function numOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function createSarvamSttSession(opts: {
   onTranscript: (t: SttTranscript) => void;
   onError: (err: Error) => void;
+  /** Optional on purpose: the AI_ASSISTED path passes neither and keeps
+   * exactly its previous behaviour. */
+  onVadStart?: (e: SttVadEvent) => void;
+  onVadEnd?: (e: SttVadEvent) => void;
 }): SarvamSttSession {
   const apiKey = process.env.SARVAM_API_KEY;
   if (!apiKey) throw new Error("Missing required env var: SARVAM_API_KEY");
@@ -52,7 +72,12 @@ export function createSarvamSttSession(opts: {
   // Sarvam's default is 500ms. 300ms measurably shortens the gap without
   // chopping mid-sentence pauses; lower starts clipping people who pause to
   // think mid-answer.
-  const url = `${SARVAM_STT_URL}?model=${encodeURIComponent(model)}&sample_rate=16000&encoding=linear16&language_code=auto&mode=codemix&stream_type=fast&silence_duration_ms=300`;
+  // Tunable because it is a fixed cost on every single turn and the right
+  // value is a measured trade, not a constant: lower shortens the gap after
+  // the lead stops talking, but starts clipping people who pause mid-answer.
+  // Compare `[turn]` log lines before and after changing it.
+  const silenceMs = Number(process.env.SARVAM_STT_SILENCE_MS) || 300;
+  const url = `${SARVAM_STT_URL}?model=${encodeURIComponent(model)}&sample_rate=16000&encoding=linear16&language_code=auto&mode=codemix&stream_type=fast&silence_duration_ms=${silenceMs}`;
 
   const ws = new WebSocket(url, {
     headers: { "API-SUBSCRIPTION-KEY": apiKey },
@@ -84,9 +109,25 @@ export function createSarvamSttSession(opts: {
       if (msg.event === "transcript.final") {
         console.log(`[sarvam-stt] FINAL: "${msg.text}" (lang=${msg.language}, conf=${msg.language_confidence})`);
       }
-      opts.onTranscript({ text: msg.text, isFinal: msg.event === "transcript.final" });
+      opts.onTranscript({
+        text: msg.text,
+        isFinal: msg.event === "transcript.final",
+        utteranceIdx: numOrNull(msg.utterance_idx),
+        language: typeof msg.language === "string" ? msg.language : null,
+      });
     } else if (msg.event === "vad.speech_start" || msg.event === "vad.speech_end") {
-      // Expected, not a transcript — no action needed.
+      // Speech onset, hundreds of milliseconds before the final transcript.
+      // These were discarded until now, which is why an interruption could
+      // not be acted on until the lead had finished their whole sentence.
+      const event = {
+        utteranceIdx: numOrNull(msg.utterance_idx),
+        confidence: numOrNull(msg.confidence),
+      };
+      console.log(
+        `[sarvam-stt] VAD ${msg.event === "vad.speech_start" ? "start" : "end"} utt=${event.utteranceIdx ?? "?"} conf=${event.confidence ?? "?"}`,
+      );
+      if (msg.event === "vad.speech_start") opts.onVadStart?.(event);
+      else opts.onVadEnd?.(event);
     } else if (msg.event === "error") {
       opts.onError(new Error(typeof msg.message === "string" ? msg.message : JSON.stringify(msg)));
     } else {

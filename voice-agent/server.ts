@@ -26,7 +26,11 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { verifyAssistToken } from "../src/lib/voice-agent-token.js";
 import { plivoClient } from "../src/lib/plivo.js";
-import { createSarvamSttSession, type SarvamSttSession } from "./pipeline/sarvam-stt.js";
+import {
+  createSarvamSttSession,
+  type SarvamSttSession,
+  type SttVadEvent,
+} from "./pipeline/sarvam-stt.js";
 import { createSarvamTtsSession, type SarvamTtsSession } from "./pipeline/sarvam-tts.js";
 import {
   resolveTtsLanguage,
@@ -35,10 +39,36 @@ import {
   closingLine,
   type SarvamTtsLanguage,
 } from "./pipeline/tts-language.js";
-import { isBackchannel } from "./pipeline/backchannel.js";
+import { isBackchannel, classifyInterrupt } from "./pipeline/backchannel.js";
+import { toSpeakableText } from "./pipeline/voice-output.js";
+import {
+  startTurn,
+  formatTurnLog,
+  formatCallLog,
+  newFrameStats,
+  recordFrame,
+  percentile,
+  type TurnMetrics,
+  type TurnTrigger,
+  type FrameStats,
+  type CallMetricsSnapshot,
+} from "./pipeline/turn-metrics.js";
 import { detectLanguage } from "./pipeline/detect-language.js";
-import { maybeGenerateSuggestion, summarizeCall } from "./pipeline/openai-assist.js";
-import { buildSystemPrompt, runAgentTurn, type LeadBrief } from "./pipeline/openai-agent.js";
+import {
+  maybeGenerateSuggestion,
+  summarizeCall,
+  extractCallFacts,
+  type CallSummary,
+  type CallFacts,
+} from "./pipeline/openai-assist.js";
+import {
+  buildSystemPrompt,
+  runAgentTurn,
+  type LeadBrief,
+  type ProductBrief,
+  type PriorCallBrief,
+} from "./pipeline/openai-agent.js";
+import { recordCallOutcome } from "./tools/crm-tools.js";
 
 const SUGGESTION_MIN_INTERVAL_MS = 8000;
 // Safety-net if Plivo's checkpoint/playedStream mechanism (used to hang up
@@ -59,6 +89,26 @@ const FILLER_DELAY_MS = 400;
 /** Time allowed for a closing line to play before the line is dropped. */
 const CLOSING_PLAY_MS = 4000;
 
+// Two-stage barge-in. Until this existed the interrupt could not fire until
+// Sarvam emitted a *final* transcript, which needs silence_duration_ms (300ms)
+// of quiet after the lead stops — so the AI talked over them for the whole
+// length of their sentence plus 300ms. Stage A reacts to speech onset, Stage B
+// commits once the partial proves it was real speech and not a cough.
+/** Longest an unresolved VAD hit may hold TTS audio before we conclude it was
+ * noise and resume. Covers silence_duration_ms=300 plus partial jitter, and is
+ * short enough to be inaudible given Plivo is usually holding a queue. Tune
+ * from the `[turn]` logs rather than by feel. */
+const BARGE_HOLD_MAX_MS = 600;
+/** ~2s of 16kHz 16-bit mono. Second safety net, in case the timer is starved. */
+const HELD_AUDIO_MAX_BYTES = 64_000;
+/** After a committed barge-in, TTS keeps streaming the cancelled sentence's
+ * tail; drop it rather than play it over the lead. Bounded because the next
+ * turn's audio cannot arrive faster than time-to-first-token anyway. */
+const TTS_DISCARD_MIN_MS = 400;
+/** Kill switch, same revert-in-seconds pattern as VOICE_AGENT_LLM_PROVIDER:
+ * set to "final-only" and restart to get exactly the previous behaviour. */
+const TWO_STAGE_BARGE_IN = (process.env.VOICE_AGENT_BARGE_IN ?? "two-stage") !== "final-only";
+
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
@@ -75,6 +125,13 @@ type CallSession = {
   /** Qualification facts injected into the system prompt so the agent
    * doesn't burn a get_lead_context round trip on what we already know. */
   leadBrief: Omit<LeadBrief, "name">;
+  /** The whole catalogue, loaded once at connect. Small enough to inline, and
+   * inlining it removes a tool round trip from price questions — the turns
+   * that decide a sale and, measured, the slowest in the call. */
+  products: ProductBrief[];
+  /** What happened on the last few calls to this lead, so the agent stops
+   * re-asking things they already answered. */
+  priorCalls: PriorCallBrief[];
   providerCallSid: string | null;
   transcriptSegments: string[];
   assistSocket: WebSocket | null;
@@ -99,6 +156,9 @@ type CallSession = {
   /** Language detection runs once per call, not per utterance. */
   languageDetected: boolean;
   endingCall: boolean;
+  /** Set when the call was handed to a rep, so the wrap-up guard records
+   * TRANSFERRED_TO_HUMAN instead of inventing a CONNECTED outcome. */
+  transferred: boolean;
   /** Voice language for this call, reused by the server's own spoken lines
    * (filler, closing) so they match what the agent is speaking. */
   languageCode: SarvamTtsLanguage;
@@ -108,6 +168,45 @@ type CallSession = {
   lastSuggestionAt: number;
   suggestionInFlight: boolean;
   finalized: boolean;
+
+  // --- Two-stage barge-in ---
+  /** How TTS audio is routed right now. "holding" is a provisional barge-in
+   * (Stage A, nothing destroyed yet); "discarding" drains the tail of a
+   * sentence that has already been cut off. */
+  ttsGate: "open" | "holding" | "discarding";
+  heldAudio: Buffer[];
+  heldAudioBytes: number;
+  /** Which VAD utterance opened the current hold, so a stale partial from an
+   * earlier utterance cannot commit or abort it. */
+  holdUtteranceIdx: number | null;
+  holdTimer: NodeJS.Timeout | null;
+  holdStartedAt: number | null;
+  /** Drop TTS chunks until this time even after the gate reopens. */
+  discardUntil: number;
+  /** Stage B already cleared aiSpeaking; the final still has to tell the model
+   * it was cut off. */
+  bargeCommitted: boolean;
+  vadStartedAt: number | null;
+
+  // --- Telemetry (see pipeline/turn-metrics.ts) ---
+  currentTurn: TurnMetrics | null;
+  turnCount: number;
+  interruptionCount: number;
+  bargeAbortCount: number;
+  stallCount: number;
+  ttsBytesSent: number;
+  leadSpeechMs: number;
+  callStartedAt: number;
+  frameStats: FrameStats;
+  ttftSamples: number[];
+  totalSamples: number[];
+  clearAckSamples: number[];
+  clearSentAt: number | null;
+  /** When the lead finished the utterance now sitting in `pendingUtterance`,
+   * so a queued turn's latency is measured from their speech, not from the
+   * moment we got round to it. */
+  pendingUtteranceAt: number | null;
+  lastLanguage: string | null;
 };
 
 const sessions = new Map<string, CallSession>();
@@ -129,6 +228,8 @@ function createSession(
   mode: CallSession["mode"],
   leadId: string | null,
   lead?: LeadRow | null,
+  products: ProductBrief[] = [],
+  priorCalls: PriorCallBrief[] = [],
 ): CallSession {
   return {
     mode,
@@ -145,6 +246,8 @@ function createSession(
       cropInterest: lead?.cropInterest ?? null,
       remarks: lead?.remarks ?? null,
     },
+    products,
+    priorCalls,
     providerCallSid: null,
     transcriptSegments: [],
     assistSocket: null,
@@ -159,6 +262,7 @@ function createSession(
     pendingUtterance: null,
     languageDetected: false,
     endingCall: false,
+    transferred: false,
     // A language this lead was actually heard speaking beats the guess made
     // from their state, which is only a proxy and is wrong for anyone who
     // has moved. Falls back to the state map on a first call.
@@ -169,6 +273,32 @@ function createSession(
     lastSuggestionAt: 0,
     suggestionInFlight: false,
     finalized: false,
+
+    ttsGate: "open",
+    heldAudio: [],
+    heldAudioBytes: 0,
+    holdUtteranceIdx: null,
+    holdTimer: null,
+    holdStartedAt: null,
+    discardUntil: 0,
+    bargeCommitted: false,
+    vadStartedAt: null,
+
+    currentTurn: null,
+    turnCount: 0,
+    interruptionCount: 0,
+    bargeAbortCount: 0,
+    stallCount: 0,
+    ttsBytesSent: 0,
+    leadSpeechMs: 0,
+    callStartedAt: Date.now(),
+    frameStats: newFrameStats(),
+    ttftSamples: [],
+    totalSamples: [],
+    clearAckSamples: [],
+    clearSentAt: null,
+    pendingUtteranceAt: null,
+    lastLanguage: null,
   };
 }
 
@@ -192,8 +322,19 @@ function getOrCreateAssistSession(callId: string): CallSession {
  */
 function speakWithCheckpoint(session: CallSession, text: string) {
   if (!session.ttsSession) return;
+  // A new deliberate utterance supersedes the one that was cut off, so the
+  // discard window must not swallow it. Not reopened from "holding": if the
+  // lead is still mid-hold, this sentence joins the held buffer rather than
+  // jumping the queue.
+  if (session.ttsGate === "discarding") {
+    session.ttsGate = "open";
+    session.discardUntil = 0;
+  }
   session.aiSpeaking = true;
-  session.ttsSession.speak(text);
+  // Single choke point for everything the caller hears — streamed sentences,
+  // filler words, the closing line and the holding line — so the speech
+  // filter cannot be bypassed by adding another call site later.
+  session.ttsSession.speak(toSpeakableText(text));
   if (session.plivoWs?.readyState === WebSocket.OPEN) {
     session.plivoWs.send(JSON.stringify({ event: "checkpoint", name: `utt-${session.utteranceSeq}` }));
   }
@@ -230,18 +371,83 @@ function armSilenceTimer(session: CallSession, callId: string) {
 }
 
 function clearCallTimers(session: CallSession) {
-  for (const t of [session.silenceTimer, session.maxCallTimer, session.fillerTimer]) {
+  for (const t of [session.silenceTimer, session.maxCallTimer, session.fillerTimer, session.holdTimer]) {
     if (t) clearTimeout(t);
   }
   session.silenceTimer = null;
   session.maxCallTimer = null;
   session.fillerTimer = null;
+  session.holdTimer = null;
 }
 
 function pushToAssist(session: CallSession, message: unknown) {
   if (session.assistSocket && session.assistSocket.readyState === WebSocket.OPEN) {
     session.assistSocket.send(JSON.stringify(message));
   }
+}
+
+/**
+ * Records the outcome the model was supposed to record itself.
+ *
+ * `end_call` is the only thing that writes an outcome, and it fires only if
+ * the model chooses to call it — unreliable on both providers, and a lead who
+ * hangs up mid-sentence never gives it the chance. The server-side wrap-up
+ * guards (silence, 5-minute cap) hang the call up but wrote nothing either.
+ * The result: a two-minute qualification call with a full transcript and
+ * summary, no outcome, and no task telling a rep to follow it up — 9 of 20
+ * real AI conversations as of 2026-09-11.
+ *
+ * Only ever fills a blank. Anything `end_call` already recorded wins.
+ */
+async function recordOutcomeIfMissing(callId: string, session: CallSession, transcript: string) {
+  if (session.mode !== "AI_AUTONOMOUS" || !session.leadId) return;
+  // Nobody said anything — a wrap-up task for a silent connect is noise, and
+  // the retry is the dialer's job, not a rep's.
+  if (!transcript) return;
+
+  try {
+    const call = await prisma.call.findUnique({
+      where: { id: callId },
+      select: { outcome: true },
+    });
+    if (!call || call.outcome) return;
+
+    const outcome = session.transferred ? "TRANSFERRED_TO_HUMAN" : "CONNECTED";
+    await recordCallOutcome(prisma, {
+      callId,
+      leadId: session.leadId,
+      outcome,
+      createFollowUp: !session.transferred,
+      auto: true,
+    });
+    console.log(`[call ${callId}] outcome auto-recorded as ${outcome} (end_call never ran)`);
+  } catch (err) {
+    console.error(`[call ${callId}] auto-outcome failed`, err);
+  }
+}
+
+/** Gathered once, then used twice: the log line and the stored `aiMetrics`. */
+function callMetrics(callId: string, session: CallSession): CallMetricsSnapshot {
+  const { gaps, longGaps } = session.frameStats;
+  return {
+    callId,
+    durationSec: Math.round((Date.now() - session.callStartedAt) / 1000),
+    turns: session.turnCount,
+    interrupts: session.interruptionCount,
+    bargeAborts: session.bargeAbortCount,
+    stalls: session.stallCount,
+    aiTalkSec: Math.round(session.ttsBytesSent / 32_000),
+    leadTalkSec: TWO_STAGE_BARGE_IN ? Math.round(session.leadSpeechMs / 1000) : null,
+    ttftP50: percentile(session.ttftSamples, 0.5),
+    ttftP90: percentile(session.ttftSamples, 0.9),
+    totalP50: percentile(session.totalSamples, 0.5),
+    totalP90: percentile(session.totalSamples, 0.9),
+    frameGapP50: percentile(gaps, 0.5),
+    frameGapP90: percentile(gaps, 0.9),
+    frameGapMax: gaps.length ? Math.max(...gaps) : -1,
+    longGaps,
+    clearAckP50: percentile(session.clearAckSamples, 0.5),
+  };
 }
 
 async function finalizeSession(callId: string, session: CallSession) {
@@ -254,23 +460,64 @@ async function finalizeSession(callId: string, session: CallSession) {
   const fullTranscript = session.transcriptSegments.join(" ").trim();
   const agentVersion = session.mode === "AI_AUTONOMOUS" ? "phase2-autonomous-v1" : "phase1-call-assist-v1";
 
+  // Summarizing is a network call to a third-party LLM; the transcript is
+  // already in hand. Sharing one try block meant a summarizer timeout took
+  // the transcript down with it — and this is its only copy, since the
+  // session is dropped at the end of this function. A failed summary now
+  // costs the summary and nothing else.
+  // Run together: both are independent reads of the same finished transcript,
+  // and the call is already over so nothing is waiting on them but this write.
+  let summary: CallSummary | null = null;
+  let facts: CallFacts | null = null;
+  const [summaryResult, factsResult] = await Promise.allSettled([
+    summarizeCall(fullTranscript),
+    extractCallFacts(fullTranscript),
+  ]);
+  if (summaryResult.status === "fulfilled") summary = summaryResult.value;
+  else console.error(`[call ${callId}] summarize failed — saving transcript without it`, summaryResult.reason);
+  if (factsResult.status === "fulfilled") facts = factsResult.value;
+  else console.error(`[call ${callId}] fact extraction failed — saving transcript without it`, factsResult.reason);
+
+  const metrics = callMetrics(callId, session);
+
   try {
-    const { summary, sentiment, intentTags } = await summarizeCall(fullTranscript);
     await prisma.call.update({
       where: { id: callId },
       data: {
         transcript: session.transcriptSegments,
-        aiSummary: summary,
-        aiSentiment: sentiment,
-        aiIntentTags: intentTags,
         aiAgentVersion: agentVersion,
+        // Piggybacks on the write that already happens here — no extra query,
+        // and nothing on the audio path.
+        aiMetrics: metrics as unknown as object,
+        ...(facts ? { aiStructured: facts as unknown as object } : {}),
+        ...(summary
+          ? {
+              aiSummary: summary.summary,
+              aiSentiment: summary.sentiment,
+              aiIntentTags: summary.intentTags,
+            }
+          : {}),
       },
     });
-    pushToAssist(session, { type: "call-ended", summary, sentiment });
-    console.log(`[call ${callId}] finalized (${session.mode}): ${summary.slice(0, 80)}`);
+    pushToAssist(session, {
+      type: "call-ended",
+      summary: summary?.summary ?? "",
+      sentiment: summary?.sentiment ?? null,
+    });
+    console.log(
+      `[call ${callId}] finalized (${session.mode}): ${summary ? summary.summary.slice(0, 80) : "(summary unavailable)"}`,
+    );
   } catch (err) {
     console.error(`[call ${callId}] finalize failed`, err);
   }
+
+  await recordOutcomeIfMissing(callId, session, fullTranscript);
+
+  // One line per call, carrying the audio-transport health that decides
+  // whether the Cloudflare Tunnel in front of this process is the real
+  // bottleneck: if frameGapP90 climbs past ~200ms, or longGaps is routinely
+  // non-zero, the transport is the problem rather than the pipeline.
+  console.log(formatCallLog(metrics));
 
   sessions.delete(callId);
 }
@@ -337,6 +584,140 @@ function sendPlayAudio(ws: WebSocket, chunk: Buffer) {
 }
 
 /**
+ * Every byte of synthesized audio passes through here, which is what makes a
+ * barge-in able to stop mid-sentence.
+ *
+ * Before this existed, `cancelTurn` stopped the model queueing *more*
+ * sentences but the sentence already handed to TTS kept streaming, and its
+ * chunks were forwarded unconditionally — so after `clearAudio` the tail of
+ * the cancelled line played anyway and the AI carried on over the lead.
+ *
+ * Deliberately has no logging: this runs dozens of times per turn.
+ */
+function routeTtsChunk(session: CallSession, callId: string, chunk: Buffer) {
+  const ws = session.plivoWs;
+  if (ws?.readyState !== WebSocket.OPEN) return;
+
+  if (session.ttsGate === "discarding") {
+    // Self-expiring: a turn that produces no further speech (a tool-only hop,
+    // say) would otherwise leave the gate shut and mute the rest of the call
+    // until something happened to call speakWithCheckpoint again.
+    if (Date.now() < session.discardUntil) return;
+    session.ttsGate = "open";
+    session.discardUntil = 0;
+  }
+
+  if (session.ttsGate === "holding") {
+    session.heldAudio.push(chunk);
+    session.heldAudioBytes += chunk.length;
+    if (session.heldAudioBytes >= HELD_AUDIO_MAX_BYTES) {
+      resumeHeldAudio(session, callId, "buffer-cap");
+    }
+    return;
+  }
+
+  sendPlayAudio(ws, chunk);
+  session.ttsBytesSent += chunk.length;
+  if (session.currentTurn && session.currentTurn.firstPlayAudioAt === null) {
+    session.currentTurn.firstPlayAudioAt = Date.now();
+  }
+}
+
+/** Stage A — speech onset. Holds new audio without destroying anything, so
+ * this is free to be wrong: a cough resumes with the line intact. */
+function beginHold(session: CallSession, callId: string, event: SttVadEvent) {
+  session.vadStartedAt = Date.now();
+  // Nothing playing means nothing to protect, and a second VAD hit inside an
+  // existing hold must not restart the deadline.
+  if (!session.aiSpeaking || session.ttsGate !== "open") return;
+
+  session.ttsGate = "holding";
+  session.holdUtteranceIdx = event.utteranceIdx;
+  session.holdStartedAt = Date.now();
+  if (session.currentTurn && session.currentTurn.bargeStage === "none") {
+    session.currentTurn.bargeStage = "A";
+  }
+  if (session.holdTimer) clearTimeout(session.holdTimer);
+  session.holdTimer = setTimeout(
+    () => resumeHeldAudio(session, callId, "hold-timeout"),
+    BARGE_HOLD_MAX_MS,
+  );
+  console.log(
+    `[call ${callId}] barge stage=A utt=${event.utteranceIdx ?? "?"} conf=${event.confidence ?? "?"}`,
+  );
+}
+
+/** Stage B — the interruption is real. This is the point of no return: audio
+ * the lead is hearing gets destroyed. */
+function commitBargeIn(
+  session: CallSession,
+  callId: string,
+  via: "partial" | "final",
+  text: string,
+) {
+  if (session.holdTimer) {
+    clearTimeout(session.holdTimer);
+    session.holdTimer = null;
+  }
+  const heldMs = session.holdStartedAt ? Date.now() - session.holdStartedAt : 0;
+  const dropped = session.heldAudio.length;
+  session.heldAudio = [];
+  session.heldAudioBytes = 0;
+  session.holdStartedAt = null;
+
+  session.cancelTurn = true;
+  session.aiSpeaking = false;
+  session.bargeCommitted = true;
+  session.ttsGate = "discarding";
+  session.discardUntil = Date.now() + TTS_DISCARD_MIN_MS;
+  session.interruptionCount++;
+  if (session.currentTurn) session.currentTurn.bargeStage = "B";
+
+  if (session.plivoWs?.readyState === WebSocket.OPEN) {
+    session.clearSentAt = Date.now();
+    session.plivoWs.send(JSON.stringify({ event: "clearAudio" }));
+  }
+  console.log(
+    `[call ${callId}] barge stage=B via=${via} utt=${session.holdUtteranceIdx ?? "?"} held=${heldMs}ms dropped=${dropped}chunks "${text.slice(0, 40)}"`,
+  );
+  session.holdUtteranceIdx = null;
+}
+
+/** Abort — it was noise, or an "achha". Puts the held audio back so the AI
+ * finishes its sentence as if nothing happened. */
+function resumeHeldAudio(session: CallSession, callId: string, reason: string) {
+  if (session.ttsGate !== "holding") return;
+  if (session.holdTimer) {
+    clearTimeout(session.holdTimer);
+    session.holdTimer = null;
+  }
+  const heldMs = session.holdStartedAt ? Date.now() - session.holdStartedAt : 0;
+  const held = session.heldAudio;
+  session.heldAudio = [];
+  session.heldAudioBytes = 0;
+  session.holdStartedAt = null;
+  session.holdUtteranceIdx = null;
+  session.ttsGate = "open";
+  session.bargeAbortCount++;
+  if (session.currentTurn && session.currentTurn.bargeStage === "A") {
+    session.currentTurn.bargeStage = "abort";
+  }
+
+  const ws = session.plivoWs;
+  if (ws?.readyState === WebSocket.OPEN) {
+    // Synchronous: nothing awaits between chunks, so no newly-arriving chunk
+    // can interleave halfway through the replay.
+    for (const chunk of held) {
+      sendPlayAudio(ws, chunk);
+      session.ttsBytesSent += chunk.length;
+    }
+  }
+  console.log(
+    `[call ${callId}] barge stage=abort reason=${reason} held=${heldMs}ms resumed=${held.length}chunks`,
+  );
+}
+
+/**
  * Plivo <Stream> handler — branches on the Call's callMode, looked up here
  * (Phase 2 addition; Phase 1 didn't need this since it only ever handled
  * AI_ASSISTED). callId travels in the URL query string (set by
@@ -396,7 +777,67 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
   }
 
   console.log(`[plivo-stream] connected for callId=${callId}, mode=${call.callMode}`);
-  const session = createSession(call.callMode as CallSession["mode"], call.leadId, call.lead);
+
+  // Catalogue and recent history, fetched once here rather than through tool
+  // round trips mid-conversation. Both are small, both are on the greeting's
+  // critical path only once, and a failure must not stop the call — an agent
+  // with no catalogue still works, it just has to promise a callback.
+  let products: ProductBrief[] = [];
+  let priorCalls: PriorCallBrief[] = [];
+  if (call.callMode === "AI_AUTONOMOUS" && call.leadId) {
+    try {
+      const [productRows, callRows] = await Promise.all([
+        prisma.product.findMany({
+          where: { isActive: true },
+          select: {
+            name: true,
+            category: true,
+            unit: true,
+            packSize: true,
+            mrp: true,
+            description: true,
+            targetCrops: true,
+            problemSolved: true,
+            dosage: true,
+            applicationMethod: true,
+            nutrientContent: true,
+            benefits: true,
+            availability: true,
+          },
+          orderBy: { name: "asc" },
+          take: 40,
+        }),
+        prisma.call.findMany({
+          where: { leadId: call.leadId, id: { not: callId }, aiSummary: { not: null } },
+          select: { calledAt: true, outcome: true, aiSummary: true },
+          orderBy: { calledAt: "desc" },
+          take: 3,
+        }),
+      ]);
+      products = productRows.map((p) => ({
+        ...p,
+        mrp: p.mrp == null ? null : Number(p.mrp),
+      }));
+      priorCalls = callRows.map((c) => ({
+        daysAgo: Math.floor((Date.now() - c.calledAt.getTime()) / 86_400_000),
+        outcome: c.outcome,
+        summary: c.aiSummary,
+      }));
+      console.log(
+        `[call ${callId}] preloaded ${products.length} product(s) and ${priorCalls.length} prior call(s) into the prompt`,
+      );
+    } catch (err) {
+      console.error(`[call ${callId}] catalogue/history preload failed — continuing without`, err);
+    }
+  }
+
+  const session = createSession(
+    call.callMode as CallSession["mode"],
+    call.leadId,
+    call.lead,
+    products,
+    priorCalls,
+  );
   session.providerCallSid = call.providerCallSid;
   session.plivoWs = ws;
   sessions.set(callId, session);
@@ -420,7 +861,13 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
     if (msg.event === "media") {
       const media = msg.media as Record<string, unknown> | undefined;
       if (typeof media?.payload === "string") {
+        // Plivo can negotiate both tracks even when the XML asked for inbound
+        // only — a real `start` event has shown `tracks:["inbound","outbound"]`.
+        // Feeding the outbound track to STT means the AI's own voice trips the
+        // VAD, so on an autonomous call it would interrupt itself forever.
+        if (session.mode === "AI_AUTONOMOUS" && media.track === "outbound") return;
         mediaFrameCount++;
+        recordFrame(session.frameStats, Date.now());
         if (mediaFrameCount === 1 || mediaFrameCount % 100 === 0) {
           console.log(
             `[plivo-stream ${callId}] media frame #${mediaFrameCount}, track=${media.track ?? "?"}, payload=${media.payload.length} chars`,
@@ -444,10 +891,23 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
       if (msg.name === "farewell") {
         hangUpAutonomousCall(session, callId, "checkpoint");
       } else {
+        // Plivo has drained its queue, so continuing to hold would create
+        // real silence rather than merely deferring audio.
+        if (session.ttsGate === "holding") resumeHeldAudio(session, callId, "played-through");
         session.aiSpeaking = false;
         // The AI just stopped talking — start counting silence from here,
         // not from whenever the lead last spoke.
         armSilenceTimer(session, callId);
+      }
+    } else if (msg.event === "clearedAudio") {
+      // Plivo's ack for our clearAudio — the only direct evidence that a
+      // barge-in actually reached it, and the round trip is a clean read on
+      // the audio path's health.
+      if (session.clearSentAt) {
+        const rtt = Date.now() - session.clearSentAt;
+        session.clearAckSamples.push(rtt);
+        session.clearSentAt = null;
+        console.log(`[call ${callId}] plivo acked clearAudio in ${rtt}ms`);
       }
     } else if (msg.event === "stop") {
       console.log(`[plivo-stream ${callId}] stop event after ${mediaFrameCount} media frames`);
@@ -547,14 +1007,47 @@ function setupAutonomousStream(session: CallSession, callId: string) {
     session.ttsSession = createSarvamTtsSession({
       languageCode,
       onAudioChunk: (chunk) => {
-        if (session.plivoWs?.readyState === WebSocket.OPEN) sendPlayAudio(session.plivoWs, chunk);
+        if (session.currentTurn && session.currentTurn.firstTtsChunkAt === null) {
+          session.currentTurn.firstTtsChunkAt = Date.now();
+        }
+        routeTtsChunk(session, callId, chunk);
       },
       onError: (err) => console.error(`[call ${callId}] sarvam-tts error`, err),
     });
 
     session.sttSession = createSarvamSttSession({
-      onTranscript: ({ text, isFinal }) => {
-        if (!isFinal) return;
+      // Stage A. Omitted entirely when the kill switch is set, which restores
+      // exactly the previous final-transcript-only behaviour.
+      onVadStart: TWO_STAGE_BARGE_IN ? (event) => beginHold(session, callId, event) : undefined,
+      onVadEnd: TWO_STAGE_BARGE_IN
+        ? () => {
+            // Deliberately does NOT resume: Sarvam delivers the substantive
+            // partial and the final *after* speech_end, so resuming here would
+            // undo the hold moments before it was going to pay off. The single
+            // hold deadline is the only abort trigger.
+            if (session.vadStartedAt) {
+              session.leadSpeechMs += Date.now() - session.vadStartedAt;
+              session.vadStartedAt = null;
+            }
+          }
+        : undefined,
+      onTranscript: ({ text, isFinal, utteranceIdx, language }) => {
+        if (language) session.lastLanguage = language;
+
+        if (!isFinal) {
+          // Stage B: commit only once a partial proves this is real speech,
+          // and only for the utterance that opened the hold.
+          if (
+            session.ttsGate === "holding" &&
+            (session.holdUtteranceIdx === null || utteranceIdx === session.holdUtteranceIdx) &&
+            classifyInterrupt(text) === "substantive"
+          ) {
+            commitBargeIn(session, callId, "partial", text);
+          }
+          // A backchannel or too-short partial keeps holding rather than
+          // aborting — a partial can still grow into a real interruption.
+          return;
+        }
 
         // A short "haan"/"hello" while the AI is mid-sentence is the lead
         // acknowledging, not interrupting — answering it would cut the AI
@@ -564,6 +1057,9 @@ function setupAutonomousStream(session: CallSession, callId: string) {
         armSilenceTimer(session, callId);
 
         if (session.aiSpeaking && isBackchannel(text)) {
+          // Stage A may have held audio on the way to this "achha" — give it
+          // back so the sentence the lead was agreeing with still finishes.
+          if (session.ttsGate === "holding") resumeHeldAudio(session, callId, "backchannel-final");
           console.log(`[call ${callId}] ignoring backchannel while speaking: "${text}"`);
           return;
         }
@@ -571,20 +1067,18 @@ function setupAutonomousStream(session: CallSession, callId: string) {
         session.transcriptSegments.push(`Lead: ${text}`);
         void rememberSpokenLanguage(session, callId, text);
 
-        const interrupted = session.aiSpeaking;
-        if (interrupted) {
-          // A genuine barge-in: stop the current reply, drop whatever Plivo
-          // still has buffered, and tell the model it was cut off so it
-          // resumes instead of starting its introduction again.
-          console.log(`[call ${callId}] barge-in on: "${text.slice(0, 60)}"`);
-          session.cancelTurn = true;
-          session.aiSpeaking = false;
-          if (session.plivoWs?.readyState === WebSocket.OPEN) {
-            session.plivoWs.send(JSON.stringify({ event: "clearAudio" }));
-          }
+        // Stage B may already have committed on the partial; either way the
+        // model has to be told it was cut off.
+        const interrupted = session.aiSpeaking || session.bargeCommitted;
+        session.bargeCommitted = false;
+        if (session.aiSpeaking) {
+          // Still talking, so Stage B never fired — this is the old
+          // final-transcript path, which is also the degraded path whenever
+          // VAD is unavailable.
+          commitBargeIn(session, callId, "final", text);
         }
 
-        void runNextAgentTurn(session, callId, text, interrupted);
+        void runNextAgentTurn(session, callId, text, interrupted, Date.now());
       },
       onError: (err) => console.error(`[call ${callId}] sarvam-stt error`, err),
     });
@@ -608,6 +1102,10 @@ async function runNextAgentTurn(
   callId: string,
   userUtterance: string,
   interrupted = false,
+  /** When the lead actually stopped speaking. Latency is measured from here,
+   * not from when this function got its turn, so a queued utterance reports
+   * the wait the caller really experienced. */
+  spokeAt = Date.now(),
 ) {
   if (session.endingCall || !session.leadId) {
     console.log(`[call ${callId}] dropped turn (ending=${session.endingCall}): "${userUtterance.slice(0, 80)}"`);
@@ -621,6 +1119,7 @@ async function runNextAgentTurn(
     // them. Only the most recent is kept; older ones are stale by the time
     // the current turn finishes.
     session.pendingUtterance = userUtterance;
+    session.pendingUtteranceAt = spokeAt;
     console.log(`[call ${callId}] queued while busy: "${userUtterance.slice(0, 80)}"`);
     return;
   }
@@ -628,6 +1127,15 @@ async function runNextAgentTurn(
   // Fresh turn: whatever cancelled the previous one no longer applies.
   session.cancelTurn = false;
   console.log(`[call ${callId}] agent turn starting for: "${userUtterance.slice(0, 120)}"`);
+
+  session.turnCount++;
+  const trigger: TurnTrigger =
+    session.agentHistory.length === 0 ? "greeting" : spokeAt < Date.now() - 50 ? "queued" : "final";
+  const metrics = startTurn(callId, session.turnCount, trigger, spokeAt, Math.max(0, Date.now() - spokeAt));
+  metrics.interrupted = interrupted;
+  metrics.leadChars = userUtterance.length;
+  metrics.lang = session.lastLanguage;
+  session.currentTurn = metrics;
 
   try {
     if (session.agentHistory.length === 0) {
@@ -639,6 +1147,7 @@ async function runNextAgentTurn(
         content: buildSystemPrompt(
           { name: session.leadName ?? "the lead", ...session.leadBrief },
           languageName(session.languageCode),
+          { products: session.products, priorCalls: session.priorCalls },
         ),
       });
     }
@@ -669,6 +1178,7 @@ async function runNextAgentTurn(
       session.fillerTimer = setTimeout(() => {
         if (spokenAnything || session.cancelTurn || session.endingCall) return;
         session.utteranceSeq += 1;
+        metrics.spokeFiller = true;
         speakWithCheckpoint(session, fillerWord(session.languageCode, session.utteranceSeq));
       }, FILLER_DELAY_MS);
     }
@@ -687,12 +1197,18 @@ async function runNextAgentTurn(
         }
         session.utteranceSeq += 1;
         spokenAnything = true;
+        if (metrics.firstSentenceAt === null) metrics.firstSentenceAt = Date.now();
         console.log(`[call ${callId}] speaking sentence: "${sentence.slice(0, 120)}"`);
         speakWithCheckpoint(session, sentence);
       },
       () => session.cancelTurn,
     );
     session.agentHistory = result.history;
+    metrics.llmRequestAt = result.timings.requestStartedAt;
+    metrics.firstTokenAt = result.timings.firstTokenAt;
+    metrics.hops = result.timings.hops;
+    metrics.tools = result.timings.tools;
+    metrics.replyChars = result.reply.length;
     console.log(
       `[call ${callId}] agent reply complete: "${result.reply.slice(0, 200)}" (controlSignal=${result.controlSignal ?? "none"}, cancelled=${session.cancelTurn})`,
     );
@@ -722,7 +1238,10 @@ async function runNextAgentTurn(
     } else if (result.controlSignal === "transfer_to_human") {
       // The tool itself already triggered the Plivo REST transfer; Plivo
       // will tear this stream down as the call flow moves to
-      // transfer/route.ts. Nothing further to do here.
+      // transfer/route.ts. All that's left is to remember it happened, so
+      // the wrap-up guard in finalizeSession doesn't misread the teardown
+      // as an ordinary end-of-call.
+      session.transferred = true;
       console.log(`[call ${callId}] transfer_to_human signaled`);
     }
   } catch (err) {
@@ -733,7 +1252,13 @@ async function runNextAgentTurn(
     // silence until they hung up. A holding line keeps the call human and
     // makes the failure obvious in the recording, not just in the log.
     console.error(`[call ${callId}] agent turn failed`, err);
-    session.ttsSession?.speak("Sorry, ek minute. Main check kar raha hoon.");
+    metrics.stalled = true;
+    session.stallCount++;
+    // Routed through speakWithCheckpoint rather than straight at the TTS
+    // socket, so a barge-in's discard window can't swallow the one line whose
+    // whole job is to prove the call is still alive.
+    session.utteranceSeq += 1;
+    speakWithCheckpoint(session, "Sorry, ek minute. Main check kar raha hoon.");
     session.ttsSession?.flush();
   } finally {
     session.agentTurnInFlight = false;
@@ -747,10 +1272,21 @@ async function runNextAgentTurn(
 
     // Answer anything the lead said while that turn was generating.
     const queued = session.pendingUtterance;
+    const queuedAt = session.pendingUtteranceAt;
     session.pendingUtterance = null;
+    session.pendingUtteranceAt = null;
+
+    metrics.endedAt = Date.now();
+    if (metrics.firstTokenAt !== null) {
+      session.ttftSamples.push(metrics.firstTokenAt - metrics.startedAt);
+    }
+    session.totalSamples.push(metrics.endedAt - metrics.startedAt);
+    session.currentTurn = null;
+    console.log(formatTurnLog(metrics));
+
     if (queued && !session.endingCall) {
       console.log(`[call ${callId}] answering queued utterance: "${queued.slice(0, 60)}"`);
-      void runNextAgentTurn(session, callId, queued);
+      void runNextAgentTurn(session, callId, queued, false, queuedAt ?? Date.now());
     }
   }
 }

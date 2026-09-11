@@ -55,16 +55,133 @@ export type CallSummary = {
   intentTags: string[];
 };
 
+/**
+ * The facts worth keeping from a call, in a shape that can be queried and fed
+ * back into the next call's prompt.
+ *
+ * A prose summary reads well to a human and is useless to everything else:
+ * you cannot filter leads by it, and dropping it into the next system prompt
+ * re-states the conversation instead of its conclusions. Every field is
+ * nullable because a 30-second call genuinely does not establish acreage, and
+ * inventing it would be worse than leaving it blank.
+ */
+export type CallFacts = {
+  customerType: string | null;
+  location: string | null;
+  crop: string | null;
+  acreage: string | null;
+  productsInterested: string[];
+  currentProducts: string[];
+  painPoints: string[];
+  objections: string[];
+  purchaseIntent: "HIGH" | "MEDIUM" | "LOW" | "NONE" | null;
+  quantityEstimate: string | null;
+  callbackRequested: boolean;
+  callbackTime: string | null;
+  nextAction: string | null;
+  leadTemperature: "HOT" | "WARM" | "COLD" | null;
+  language: string | null;
+};
+
+const FACTS_SYSTEM_PROMPT = `Extract what this sales call established, as strict JSON with exactly these keys:
+{"customerType": string|null, "location": string|null, "crop": string|null, "acreage": string|null, "productsInterested": string[], "currentProducts": string[], "painPoints": string[], "objections": string[], "purchaseIntent": "HIGH"|"MEDIUM"|"LOW"|"NONE"|null, "quantityEstimate": string|null, "callbackRequested": boolean, "callbackTime": string|null, "nextAction": string|null, "leadTemperature": "HOT"|"WARM"|"COLD"|null, "language": string|null}
+Use null or an empty array for anything the call did not actually establish. Never guess a number, a crop, or an acreage that was not said. The transcript may mix Hindi, English and Bengali; answer in English.`;
+
+const EMPTY_FACTS: CallFacts = {
+  customerType: null,
+  location: null,
+  crop: null,
+  acreage: null,
+  productsInterested: [],
+  currentProducts: [],
+  painPoints: [],
+  objections: [],
+  purchaseIntent: null,
+  quantityEstimate: null,
+  callbackRequested: false,
+  callbackTime: null,
+  nextAction: null,
+  leadTemperature: null,
+  language: null,
+};
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").slice(0, 8) : [];
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : null;
+}
+
+/**
+ * Never returns a half-parsed object: a bad extraction must cost the
+ * structured record only, never the transcript it was derived from. Each
+ * field is validated rather than trusted, so a model that invents an enum
+ * value stores null instead of poisoning a query later.
+ */
+export async function extractCallFacts(fullTranscript: string): Promise<CallFacts | null> {
+  if (!fullTranscript.trim()) return null;
+
+  const res = await openai().chat.completions.create(
+    {
+      model: MODEL,
+      max_completion_tokens: 400,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: FACTS_SYSTEM_PROMPT },
+        { role: "user", content: fullTranscript },
+      ],
+    },
+    { timeout: 20_000, maxRetries: 1 },
+  );
+
+  const text = res.choices[0]?.message?.content?.trim() ?? "";
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return {
+      ...EMPTY_FACTS,
+      customerType: stringOrNull(parsed.customerType),
+      location: stringOrNull(parsed.location),
+      crop: stringOrNull(parsed.crop),
+      acreage: stringOrNull(parsed.acreage),
+      productsInterested: stringArray(parsed.productsInterested),
+      currentProducts: stringArray(parsed.currentProducts),
+      painPoints: stringArray(parsed.painPoints),
+      objections: stringArray(parsed.objections),
+      purchaseIntent: oneOf(parsed.purchaseIntent, ["HIGH", "MEDIUM", "LOW", "NONE"] as const),
+      quantityEstimate: stringOrNull(parsed.quantityEstimate),
+      callbackRequested: parsed.callbackRequested === true,
+      callbackTime: stringOrNull(parsed.callbackTime),
+      nextAction: stringOrNull(parsed.nextAction),
+      leadTemperature: oneOf(parsed.leadTemperature, ["HOT", "WARM", "COLD"] as const),
+      language: stringOrNull(parsed.language),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function summarizeCall(fullTranscript: string): Promise<CallSummary> {
-  const res = await openai().chat.completions.create({
-    model: MODEL,
-    max_completion_tokens: 300,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: SUMMARY_SYSTEM_PROMPT },
-      { role: "user", content: fullTranscript || "(no speech detected)" },
-    ],
-  });
+  const res = await openai().chat.completions.create(
+    {
+      model: MODEL,
+      max_completion_tokens: 300,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SUMMARY_SYSTEM_PROMPT },
+        { role: "user", content: fullTranscript || "(no speech detected)" },
+      ],
+    },
+    // The call is already over, so nothing is waiting on this — except the
+    // transcript write that follows it in finalizeSession. The SDK's default
+    // is 10 minutes with retries; bounded here so a stalled summarizer delays
+    // the transcript by seconds rather than by the better part of an hour.
+    { timeout: 20_000, maxRetries: 1 },
+  );
 
   const text = res.choices[0]?.message?.content?.trim() ?? "{}";
   try {
