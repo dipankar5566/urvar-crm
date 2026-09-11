@@ -81,16 +81,40 @@ export const CRM_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
-  // transfer_to_human is deliberately NOT offered to the model right now.
-  // Nobody is manning the browser softphone, and on 2026-09-10 the agent
-  // told a lead "connecting you to our representative now, stay on the
-  // line" while `transferredToUserId` stayed null — the transfer never
-  // happened and the lead was left holding. The executeCrmTool case below
-  // and api/voice/plivo/transfer/route.ts are intentionally left intact:
-  // re-add the schema here once a rep is actually logged in to receive
-  // calls AND the route has been verified end-to-end (it has no logging
-  // today, so the earlier failure could not be traced). Until then the
-  // system prompt routes these requests to schedule_follow_up instead.
+  // Re-enabled 2026-09-11 after being withheld since 2026-09-10, when the
+  // agent told a lead "connecting you to our representative now, stay on the
+  // line" and nothing happened — `transferredToUserId` stayed null and the
+  // lead was left holding. That withdrawal note set two conditions for
+  // bringing it back, and both are now addressed rather than waived:
+  //
+  //   1. "the route has been verified end-to-end (it has no logging today,
+  //      so the earlier failure could not be traced)" — the route now logs
+  //      every hit, decision and failure reason.
+  //   2. "once a rep is actually logged in to receive calls" — cannot be
+  //      proven from here, so the failure is made safe instead: the route
+  //      already falls back to a spoken apology plus a HIGH-priority
+  //      FollowUp when the rep does not answer inside 30s, and the prompt
+  //      below forbids promising a connection before one exists.
+  //
+  // `AI_TRANSFER_ENABLED=false` withdraws it again without a deploy.
+  {
+    type: "function",
+    function: {
+      name: "transfer_to_human",
+      description:
+        "Connect this call to the lead's sales rep right now. Use ONLY on a clear buying signal: they want to place an order, asked for a price list or dealership, named a quantity they intend to buy, or asked to speak to a person. If it returns an error, fall back to schedule_follow_up.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description: "The buying signal that justified the transfer, in a few words.",
+          },
+        },
+        required: ["reason"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -118,6 +142,45 @@ export const CRM_TOOLS: ChatCompletionTool[] = [
     },
   },
 ];
+
+/**
+ * What people actually say, mapped to the English words the catalogue is
+ * stored under. Translations only — nothing here asserts anything about a
+ * product, so it is safe to extend without agronomic review.
+ */
+const PRODUCT_SYNONYMS: Record<string, string[]> = {
+  // Bengali
+  "কেঁচো": ["vermicompost"],
+  "কেচো": ["vermicompost"],
+  "ভার্মি": ["vermicompost"],
+  "জৈব": ["organic"],
+  "জৈব সার": ["organic"],
+  "গোবর": ["dung", "manure"],
+  "হিউমিক": ["humic"],
+  "জিঙ্ক": ["zinc", "micronutrient"],
+  "বোরন": ["boron", "micronutrient"],
+  "সার": ["fertilizer", "compost"],
+  // Hindi
+  "वर्मीकम्पोस्ट": ["vermicompost"],
+  "केंचुआ": ["vermicompost"],
+  "जैविक": ["organic"],
+  "गोबर": ["dung", "manure"],
+  "ह्यूमिक": ["humic"],
+  "जिंक": ["zinc", "micronutrient"],
+  "बोरॉन": ["boron", "micronutrient"],
+  "खाद": ["fertilizer", "compost"],
+};
+
+function synonymTerms(query: string): string[] {
+  const lower = query.toLowerCase();
+  const terms = new Set<string>();
+  for (const [word, mapped] of Object.entries(PRODUCT_SYNONYMS)) {
+    if (query.includes(word) || lower.includes(word.toLowerCase())) {
+      for (const term of mapped) terms.add(term);
+    }
+  }
+  return [...terms];
+}
 
 export async function executeCrmTool(
   name: string,
@@ -147,6 +210,11 @@ export async function executeCrmTool(
 
     case "get_product_info": {
       const query = String(args.query ?? "");
+      // Product names are stored in English, but a farmer asks for "কেঁচো সার"
+      // or "जैविक खाद". A substring match on the raw query would find nothing
+      // and the agent would tell them we don't sell it. These are translations
+      // of what people actually say, not claims about the products.
+      const searchTerms = [query, ...synonymTerms(query)].filter((t) => t.trim().length > 0);
       // Prisma validates enum values at the DB-client level — passing an
       // arbitrary uppercased string here throws PrismaClientValidationError
       // if it isn't one of the real ProductCategory values (confirmed live:
@@ -162,13 +230,30 @@ export async function executeCrmTool(
         where: {
           isActive: true,
           OR: [
-            { name: { contains: query, mode: "insensitive" } },
+            ...searchTerms.map((term) => ({
+              name: { contains: term, mode: "insensitive" as const },
+            })),
             ...(matchedCategory ? [{ category: matchedCategory }] : []),
           ],
         },
         select: { name: true, category: true, unit: true, packSize: true, mrp: true, description: true },
         take: 5,
       });
+
+      // "We don't stock that" and "I can't see a price" are different answers
+      // and the caller deserves the right one. Without this the model got an
+      // empty list either way and had to guess which it was.
+      if (products.length === 0) {
+        console.log(`[tool ${ctx.callId}] get_product_info: no catalogue match for "${query}"`);
+        return {
+          output: {
+            products: [],
+            notInCatalogue: true,
+            message:
+              "No such product in the Urvar catalogue. Do not invent one. Say you will check and have someone confirm, and offer a callback.",
+          },
+        };
+      }
 
       // Never hand the model a price it shouldn't say. An unset MRP is 0 in
       // the DB, and on 2026-09-10 the agent dutifully told a customer "the
@@ -220,14 +305,27 @@ export async function executeCrmTool(
     }
 
     case "transfer_to_human": {
+      // Kill switch, so the capability can be withdrawn without a deploy the
+      // way it was last time. The model is told to fall back to a callback.
+      if (process.env.AI_TRANSFER_ENABLED === "false") {
+        console.log(`[tool ${ctx.callId}] transfer_to_human refused: disabled by AI_TRANSFER_ENABLED`);
+        return { output: { error: "Live transfer is unavailable. Schedule a follow-up instead." } };
+      }
+
       const lead = await ctx.prisma.lead.findUnique({
         where: { id: ctx.leadId },
         select: { assignedToId: true },
       });
       const repId = lead?.assignedToId ?? process.env.AI_CALL_FALLBACK_USER_ID;
       if (!repId || !ctx.providerCallSid) {
-        return { output: { error: "No rep or call UUID available to transfer to" } };
+        console.log(
+          `[tool ${ctx.callId}] transfer_to_human refused: repId=${repId ?? "none"} providerCallSid=${ctx.providerCallSid ?? "none"}`,
+        );
+        return { output: { error: "No rep available to transfer to. Schedule a follow-up instead." } };
       }
+      console.log(
+        `[tool ${ctx.callId}] transfer_to_human -> rep=${repId} reason="${String(args.reason ?? "").slice(0, 60)}"`,
+      );
 
       // Ensures the rep has a SIP Endpoint before the transfer XML tries to
       // dial it — same reuse as the existing human-initiated call flow.
@@ -249,70 +347,107 @@ export async function executeCrmTool(
     }
 
     case "end_call": {
-      const outcome = String(args.outcome ?? "CONNECTED");
-      const lead = await ctx.prisma.lead.findUnique({
-        where: { id: ctx.leadId },
-        select: { assignedToId: true },
+      await recordCallOutcome(ctx.prisma, {
+        callId: ctx.callId,
+        leadId: ctx.leadId,
+        outcome: String(args.outcome ?? "CONNECTED"),
       });
-      const assignedToId = lead?.assignedToId ?? process.env.AI_CALL_FALLBACK_USER_ID ?? null;
-
-      // Only create the default wrap-up FollowUp if schedule_follow_up
-      // wasn't already explicitly called this session — avoids a duplicate
-      // task when the AI already scheduled one mid-call. `call: null` is
-      // required, not just leadId+recency: Call.followUpId is @unique, so a
-      // FollowUp already claimed by an earlier call to the same lead (e.g. a
-      // retry within the hour) would otherwise be picked up here too and
-      // blow up this update with a P2002 unique-constraint error (confirmed
-      // live in logs/voice-agent-error-16.log).
-      const existingFollowUp = await ctx.prisma.followUp.findFirst({
-        where: {
-          leadId: ctx.leadId,
-          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
-          call: null,
-        },
-        orderBy: { createdAt: "desc" },
-      });
-
-      let followUpId: string | null = existingFollowUp?.id ?? null;
-      if (!followUpId && assignedToId) {
-        const followUp = await ctx.prisma.followUp.create({
-          data: {
-            leadId: ctx.leadId,
-            assignedToId,
-            dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            notes: `AI call outcome: ${outcome}`,
-          },
-        });
-        followUpId = followUp.id;
-      }
-
-      await ctx.prisma.call.update({
-        where: { id: ctx.callId },
-        data: {
-          outcome: outcome as never,
-          followUpId,
-        },
-      });
-
-      // A valid createdById is required (LeadActivity has no fallback
-      // "system" user) — skip the activity log entirely rather than write
-      // an invalid FK if there's truly no rep and no AI_CALL_FALLBACK_USER_ID.
-      if (assignedToId) {
-        await ctx.prisma.leadActivity.create({
-          data: {
-            leadId: ctx.leadId,
-            type: "CALL_LOGGED",
-            description: `AI call — ${outcome.replaceAll("_", " ")}.`,
-            createdById: assignedToId,
-            metadata: { callId: ctx.callId, aiHandled: true },
-          },
-        });
-      }
 
       return { output: { ended: true, farewell: String(args.farewell ?? "") }, controlSignal: "end_call" };
     }
 
     default:
       return { output: { error: `Unknown tool: ${name}` } };
+  }
+}
+
+/**
+ * Records how an AI call ended: the outcome on the Call row, the wrap-up
+ * FollowUp that hands the lead back to a human, and the lead's activity
+ * entry.
+ *
+ * Shared with server.ts's finalizeSession, which applies a default outcome
+ * when `end_call` never ran — the model's compliance is unreliable on both
+ * providers, and a lead who hangs up first never gives it the chance. Before
+ * that guard, 9 of 20 real AI conversations landed in the CRM with a
+ * transcript and summary but no outcome and nothing for a rep to act on.
+ */
+export async function recordCallOutcome(
+  prisma: PrismaClient,
+  params: {
+    callId: string;
+    leadId: string;
+    outcome: string;
+    /** False after a transfer: the rep who took the call owns the next step
+     * and logs it themselves, so a wrap-up task would just be noise. */
+    createFollowUp?: boolean;
+    /** Set by the server-side guard rather than the model's own end_call. */
+    auto?: boolean;
+  },
+): Promise<void> {
+  const { callId, leadId, outcome, createFollowUp = true, auto = false } = params;
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { assignedToId: true },
+  });
+  const assignedToId = lead?.assignedToId ?? process.env.AI_CALL_FALLBACK_USER_ID ?? null;
+
+  // Only create the default wrap-up FollowUp if schedule_follow_up
+  // wasn't already explicitly called this session — avoids a duplicate
+  // task when the AI already scheduled one mid-call. `call: null` is
+  // required, not just leadId+recency: Call.followUpId is @unique, so a
+  // FollowUp already claimed by an earlier call to the same lead (e.g. a
+  // retry within the hour) would otherwise be picked up here too and
+  // blow up this update with a P2002 unique-constraint error (confirmed
+  // live in logs/voice-agent-error-16.log).
+  let followUpId: string | null = null;
+  if (createFollowUp) {
+    const existingFollowUp = await prisma.followUp.findFirst({
+      where: {
+        leadId,
+        createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        call: null,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    followUpId = existingFollowUp?.id ?? null;
+    if (!followUpId && assignedToId) {
+      const followUp = await prisma.followUp.create({
+        data: {
+          leadId,
+          assignedToId,
+          dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          notes: `AI call outcome: ${outcome}`,
+        },
+      });
+      followUpId = followUp.id;
+    }
+  }
+
+  await prisma.call.update({
+    where: { id: callId },
+    data: {
+      outcome: outcome as never,
+      // Left untouched when no wrap-up task was wanted, rather than nulled —
+      // this must never clear a link an earlier write established.
+      ...(createFollowUp ? { followUpId } : {}),
+    },
+  });
+
+  // A valid createdById is required (LeadActivity has no fallback
+  // "system" user) — skip the activity log entirely rather than write
+  // an invalid FK if there's truly no rep and no AI_CALL_FALLBACK_USER_ID.
+  if (assignedToId) {
+    await prisma.leadActivity.create({
+      data: {
+        leadId,
+        type: "CALL_LOGGED",
+        description: `AI call — ${outcome.replaceAll("_", " ")}.`,
+        createdById: assignedToId,
+        metadata: { callId, aiHandled: true, autoRecorded: auto },
+      },
+    });
   }
 }

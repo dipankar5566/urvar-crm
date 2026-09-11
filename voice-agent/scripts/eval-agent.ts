@@ -14,6 +14,7 @@
  * Run:  npm run eval:agent
  */
 import "dotenv/config";
+import { writeFileSync } from "fs";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { CRM_TOOLS } from "../tools/crm-tools.js";
 import { buildSystemPrompt } from "../pipeline/openai-agent.js";
@@ -30,18 +31,56 @@ const LEAD = {
   expectedQuantity: "1 ton",
 };
 
-const SYSTEM = buildSystemPrompt(LEAD, "Bengali");
+/**
+ * The catalogue the agent now receives in its system prompt at call start.
+ *
+ * The harness used to build the prompt with no catalogue at all, which made
+ * every price scenario test an unreachable path: with nothing loaded the
+ * agent can only promise a callback, so "must call get_product_info" passed
+ * for the wrong reason. One priced and one unpriced row, because those are
+ * genuinely different conversations.
+ */
+const CATALOGUE = [
+  {
+    name: "Enriched Vermicompost",
+    category: "VERMICOMPOST",
+    unit: "kg",
+    packSize: "25",
+    mrp: 450,
+    description: null,
+  },
+  {
+    name: "Urvar PROM",
+    category: "PROM",
+    unit: "kg",
+    packSize: "50",
+    mrp: null,
+    description: null,
+  },
+];
 
-/** What each tool would have returned, had we let it run. get_product_info
- * mirrors the real post-fix shape: no mrp field, priceOnRequest instead. */
+const LANGUAGES = ["Bengali", "Hindi", "Indian English"] as const;
+type Language = (typeof LANGUAGES)[number];
+
+/** Built once per language rather than once per run: the prompt's language is
+ * what the agent opens in, and testing only Bengali left Hindi and English
+ * entirely unexercised. */
+const SYSTEM_BY_LANGUAGE = new Map<Language, string>(
+  LANGUAGES.map((language) => [language, buildSystemPrompt(LEAD, language, { products: CATALOGUE })]),
+);
+
+/** What each tool would have returned, had we let it run. */
 const TOOL_STUBS: Record<string, unknown> = {
   get_lead_context: LEAD,
   get_product_info: {
-    products: [{ name: "Enriched Vermicompost", category: "ORGANIC_MANURE", unit: "kg", packSize: "25", priceOnRequest: true }],
+    products: [],
+    notInCatalogue: true,
+    message: "No such product in the Urvar catalogue.",
   },
   check_quotation_status: { quotations: [] },
   schedule_follow_up: { scheduled: true },
   mark_do_not_call: { marked: true },
+  transfer_to_human: { transferring: true },
   end_call: { ended: true },
 };
 
@@ -55,66 +94,223 @@ type Check = {
   why: string;
 };
 
-type Scenario = { name: string; turns: { lead: string; check: Check }[] };
+type Scenario = { name: string; language: Language; turns: { lead: string; check: Check }[] };
+
+/** Said aloud in the caller's language every time, so it is worth naming once. */
+const OPENING = { mustNotCall: ["end_call", "mark_do_not_call"], why: "opening — must not end the call" };
 
 const SCENARIOS: Scenario[] = [
+  // ---------------------------------------------------------------- Bengali
   {
-    name: "Interested buyer (real call replay)",
+    name: "BN Interested buyer (real call replay)",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call", "mark_do_not_call"], why: "opening hello — must not end the call" } },
+      { lead: "Hello", check: OPENING },
       { lead: "হ্যাঁ ভাবছি বলুন", check: { mustNotCall: ["end_call"], why: "lead is engaged — must not end" } },
       { lead: "আমি রজনীগন্ধা ফুলের জন্য vermicompost খুঁজছি মোটামুটি ১০ টন মতো।", check: { mustNotCall: ["end_call"], why: "10 ton enquiry — must keep qualifying" } },
-      { lead: "কবের মধ্যে delivery হবে আর rate কি আছে?", check: { mustCall: "get_product_info", why: "price question — must check before answering" } },
+      {
+        lead: "কবের মধ্যে delivery হবে আর rate কি আছে?",
+        check: {
+          mustNotCall: ["get_product_info", "end_call"],
+          why: "vermicompost is preloaded in the prompt — a tool hop here is a second of dead air",
+        },
+      },
       { lead: "আচ্ছা ঠিক আছে, ধন্যবাদ।", check: { mustCall: "end_call", why: "clear closing cue — must wrap up" } },
     ],
   },
   {
-    name: "Price with no price in the system",
+    name: "BN Price for a product with no price on file",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call"], why: "opening" } },
-      { lead: "vermicompost er rate koto?", check: { mustCall: "get_product_info", why: "must look it up" } },
+      { lead: "Hello", check: OPENING },
       {
-        lead: "হ্যাঁ বলুন",
+        lead: "PROM er rate koto?",
         check: {
-          mustNotSay: { pattern: /\bMRP\b|\bsystem\b|সিস্টেম|শূন্য/i, why: "leaked an internal value or system reference" },
-          why: "after priceOnRequest — must offer a quotation, never a number",
+          mustNotSay: { pattern: /\bMRP\b|\bsystem\b|সিস্টেম|শূন্য|\b0\b/i, why: "leaked an internal value or system reference" },
+          why: "price is unset — must offer to confirm, never a number",
         },
       },
     ],
   },
   {
-    name: "Asks to speak to a person",
+    name: "BN Price question alone is NOT a buying signal",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call"], why: "opening" } },
+      { lead: "Hello", check: OPENING },
       {
-        lead: "আমি একজন representative এর সাথে সরাসরি কথা বলতে চাই।",
+        lead: "vermicompost er dam koto?",
         check: {
-          mustNotSay: { pattern: /connect ক|লাইনে থাকুন|connecting you|hold the line/i, why: "promised a live transfer we cannot do" },
-          why: "must offer a callback, not a transfer",
+          mustNotCall: ["transfer_to_human"],
+          why: "asking a price is a question, not an intent to buy — transferring here burns a rep on every enquiry",
         },
       },
     ],
   },
   {
-    name: "Do not call again",
+    name: "BN Wants to order now (hot lead)",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call"], why: "opening" } },
+      { lead: "Hello", check: OPENING },
+      { lead: "আমি ১০০ ব্যাগ vermicompost order করতে চাই, এখনই।", check: { mustCall: "transfer_to_human", why: "explicit order intent — hand to a person immediately" } },
+    ],
+  },
+  {
+    name: "BN Asks to speak to a person",
+    language: "Bengali",
+    turns: [
+      { lead: "Hello", check: OPENING },
+      { lead: "আমি একজন representative এর সাথে সরাসরি কথা বলতে চাই।", check: { mustCall: "transfer_to_human", why: "asked for a human — connect them" } },
+    ],
+  },
+  {
+    name: "BN Do not call again",
+    language: "Bengali",
+    turns: [
+      { lead: "Hello", check: OPENING },
       { lead: "আমাকে আর কখনও ফোন করবেন না।", check: { mustCall: "mark_do_not_call", why: "explicit opt-out" } },
     ],
   },
   {
-    name: "Not interested (but no opt-out)",
+    name: "BN Not interested (but no opt-out)",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call"], why: "opening" } },
+      { lead: "Hello", check: OPENING },
       { lead: "না, আমার এখন কোনও দরকার নেই।", check: { mustNotCall: ["mark_do_not_call"], why: "not interested is not the same as opt-out" } },
     ],
   },
   {
-    name: "Unclear backchannel (the repetition trap)",
+    name: "BN Unclear backchannel (the repetition trap)",
+    language: "Bengali",
     turns: [
-      { lead: "Hello", check: { mustNotCall: ["end_call"], why: "opening" } },
+      { lead: "Hello", check: OPENING },
       { lead: "Bataiye", check: { mustNotCall: ["end_call"], why: "lead just wants us to continue" } },
       { lead: "Hello? Bataiye na", check: { mustNotCall: ["end_call"], why: "still waiting — must rephrase, not hang up" } },
+    ],
+  },
+  {
+    name: "BN Price objection",
+    language: "Bengali",
+    turns: [
+      { lead: "Hello", check: OPENING },
+      { lead: "আপনাদের দাম অনেক বেশি, অন্য কোম্পানি সস্তায় দিচ্ছে।", check: { mustNotCall: ["end_call"], why: "an objection is a conversation, not a goodbye" } },
+    ],
+  },
+  {
+    name: "BN Angry customer",
+    language: "Bengali",
+    turns: [
+      { lead: "Hello", check: OPENING },
+      {
+        lead: "আপনারা রোজ ফোন করে বিরক্ত করছেন! কী চাই?",
+        check: {
+          mustNotCall: ["mark_do_not_call"],
+          why: "annoyance is not an opt-out request — apologise and ask, do not silently blacklist",
+        },
+      },
+    ],
+  },
+  // ------------------------------------------------------------------ Hindi
+  {
+    name: "HI Cooperative farmer",
+    language: "Hindi",
+    turns: [
+      { lead: "हाँ जी बोलिए", check: OPENING },
+      { lead: "मेरे पास दस एकड़ जमीन है, धान लगाता हूँ।", check: { mustNotCall: ["end_call"], why: "engaged lead — keep qualifying" } },
+      { lead: "अभी DAP इस्तेमाल कर रहा हूँ।", check: { mustNotCall: ["end_call"], why: "current-input answer — continue discovery" } },
+    ],
+  },
+  {
+    name: "HI Price question, preloaded product",
+    language: "Hindi",
+    turns: [
+      { lead: "हैलो", check: OPENING },
+      {
+        lead: "वर्मीकम्पोस्ट का रेट क्या है?",
+        check: {
+          mustNotCall: ["get_product_info", "transfer_to_human"],
+          why: "price is in the prompt and a price question is not buying intent",
+        },
+      },
+    ],
+  },
+  {
+    name: "HI Impatient customer",
+    language: "Hindi",
+    turns: [
+      { lead: "हाँ", check: OPENING },
+      { lead: "जल्दी बोलिए, मैं व्यस्त हूँ।", check: { mustNotCall: ["end_call"], why: "busy is a reason to offer a callback, not to hang up mid-sentence" } },
+    ],
+  },
+  {
+    name: "HI Wants dealership (hot lead)",
+    language: "Hindi",
+    turns: [
+      { lead: "हैलो", check: OPENING },
+      { lead: "मुझे आपकी डीलरशिप लेनी है, कैसे मिलेगी?", check: { mustCall: "transfer_to_human", why: "dealership enquiry is high intent" } },
+    ],
+  },
+  {
+    name: "HI Do not call again",
+    language: "Hindi",
+    turns: [
+      { lead: "हैलो", check: OPENING },
+      { lead: "दोबारा फ़ोन मत करना।", check: { mustCall: "mark_do_not_call", why: "explicit opt-out in Hindi" } },
+    ],
+  },
+  {
+    name: "HI Callback request",
+    language: "Hindi",
+    turns: [
+      { lead: "हैलो", check: OPENING },
+      { lead: "अभी नहीं, शाम को फ़ोन कीजिए।", check: { mustCall: "schedule_follow_up", why: "asked for a specific callback time" } },
+    ],
+  },
+  // ---------------------------------------------------------------- English
+  {
+    name: "EN Distributor asking for a price list",
+    language: "Indian English",
+    turns: [
+      { lead: "Yes, hello", check: OPENING },
+      { lead: "I run an agri input shop. Can you send me your price list?", check: { mustCall: "transfer_to_human", why: "price-list request from a trade buyer is high intent" } },
+    ],
+  },
+  {
+    name: "EN Confused customer",
+    language: "Indian English",
+    turns: [
+      { lead: "Hello? Who is this?", check: OPENING },
+      { lead: "Sorry, I did not understand. What company did you say?", check: { mustNotCall: ["end_call"], why: "confusion means clarify, not hang up" } },
+    ],
+  },
+  {
+    name: "EN Product objection",
+    language: "Indian English",
+    turns: [
+      { lead: "Hello", check: OPENING },
+      { lead: "I have never used organic fertilizer. Will it actually work?", check: { mustNotCall: ["end_call"], why: "a doubt is an objection to handle" } },
+      {
+        lead: "How much yield increase will I get?",
+        check: {
+          mustNotSay: { pattern: /\b\d+\s?(%|percent|quintal|ton)/i, why: "promised a yield figure nobody gave it" },
+          why: "must never promise a quantified result",
+        },
+      },
+    ],
+  },
+  {
+    name: "EN Asks something unrelated",
+    language: "Indian English",
+    turns: [
+      { lead: "Hello", check: OPENING },
+      { lead: "Do you also sell tractors?", check: { mustNotCall: ["end_call"], why: "off-catalogue question — say no and steer back, do not end" } },
+    ],
+  },
+  {
+    name: "EN Switches language mid-call",
+    language: "Indian English",
+    turns: [
+      { lead: "Hello, yes", check: OPENING },
+      { lead: "আমি বাংলায় কথা বলতে চাই।", check: { mustNotCall: ["end_call"], why: "a language switch must be followed, not treated as a failure" } },
     ],
   },
 ];
@@ -194,19 +390,25 @@ type Failure = { scenario: string; problem: string };
 async function evaluate(label: string, provider: LlmProvider) {
   const failures: Failure[] = [];
   let checks = 0;
+  /** A provider that times out has not failed a check — it has failed to
+   * answer. Counting those as check failures made a flaky network look like a
+   * worse model, which is how a six-scenario run once reported "7/9". */
+  let stalls = 0;
   const ttfts: number[] = [];
   console.log(`\n${"=".repeat(76)}\n${label}  ${provider.name} / ${provider.model}\n${"=".repeat(76)}`);
 
   for (const scenario of SCENARIOS) {
-    console.log(`\n  ${scenario.name}`);
-    const history: ChatCompletionMessageParam[] = [{ role: "system", content: SYSTEM }];
+    console.log(`\n  ${scenario.name}  [${scenario.language}]`);
+    const system = SYSTEM_BY_LANGUAGE.get(scenario.language);
+    if (!system) throw new Error(`No system prompt built for language "${scenario.language}"`);
+    const history: ChatCompletionMessageParam[] = [{ role: "system", content: system }];
     for (const { lead, check } of scenario.turns) {
       let r: TurnResult;
       try {
         r = await runTurn(provider, history, lead);
       } catch (err) {
-        console.log(`    ERR  request failed: ${(err as Error).message.slice(0, 80)}`);
-        failures.push({ scenario: scenario.name, problem: "request failed" });
+        console.log(`    STALL  provider did not answer: ${(err as Error).message.slice(0, 70)}`);
+        stalls++;
         break;
       }
       if (r.ttft) ttfts.push(r.ttft);
@@ -236,7 +438,13 @@ async function evaluate(label: string, provider: LlmProvider) {
   }
 
   const sorted = [...ttfts].sort((a, b) => a - b);
-  return { model: provider.model, checks, failures, median: sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0 };
+  return {
+    model: provider.model,
+    checks,
+    failures,
+    stalls,
+    median: sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0,
+  };
 }
 
 async function main() {
@@ -246,12 +454,23 @@ async function main() {
   ];
 
   console.log(`\n${"=".repeat(76)}\nSUMMARY\n${"=".repeat(76)}`);
+  console.log(`  ${SCENARIOS.length} scenarios across ${LANGUAGES.length} languages`);
   for (const r of results) {
     console.log(
-      `  ${r.model.padEnd(28)} ${String(r.checks - r.failures.length).padStart(2)}/${r.checks} checks   median TTFT ${r.median}ms`,
+      `  ${r.model.padEnd(28)} ${String(r.checks - r.failures.length).padStart(2)}/${r.checks} checks   ${r.stalls} stalls   median TTFT ${r.median}ms`,
     );
     for (const f of r.failures) console.log(`       - [${f.scenario}] ${f.problem}`);
   }
+
+  if (process.env.EVAL_REPORT) {
+    writeFileSync(process.env.EVAL_REPORT, JSON.stringify({ ranAt: new Date().toISOString(), results }, null, 2));
+    console.log(`\n  report written to ${process.env.EVAL_REPORT}`);
+  }
+
+  // Non-zero exit so this can gate a deploy. Stalls do not fail the run —
+  // they say the provider was unreachable, not that the agent misbehaved.
+  const failed = results.reduce((sum, r) => sum + r.failures.length, 0);
+  if (failed > 0) process.exitCode = 1;
 }
 
 main();

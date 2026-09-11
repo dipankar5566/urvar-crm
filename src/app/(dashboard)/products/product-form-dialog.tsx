@@ -39,7 +39,30 @@ type FormValues = {
   dealerPrice: string;
   distributorPrice: string;
   gstPercent: string;
+  targetCrops: string;
+  problemSolved: string;
+  dosage: string;
+  applicationMethod: string;
+  nutrientContent: string;
+  benefits: string;
+  objectionNotes: string;
+  availability: string;
 };
+
+/** The agronomy fields, rendered as one block. Labelled with what the AI does
+ * with each, because whoever fills these in is writing words a farmer will
+ * hear on the phone — and anything left blank makes the agent offer a callback
+ * rather than improvise. */
+const AGRONOMY_FIELDS: { key: keyof FormValues; label: string; placeholder: string }[] = [
+  { key: "targetCrops", label: "Target crops", placeholder: "Paddy, potato, vegetables" },
+  { key: "problemSolved", label: "Problem it solves", placeholder: "Low soil fertility, poor root development" },
+  { key: "dosage", label: "Dosage", placeholder: "e.g. 2 bags per bigha — leave blank unless confirmed" },
+  { key: "applicationMethod", label: "How to apply", placeholder: "Broadcast before sowing, mix into topsoil" },
+  { key: "nutrientContent", label: "Nutrient content", placeholder: "e.g. N 1.2%, P 0.8%, K 1.0%" },
+  { key: "benefits", label: "Benefits", placeholder: "What it does — never a promised yield figure" },
+  { key: "objectionNotes", label: "Objection notes", placeholder: "What to say when a customer pushes back on this product" },
+  { key: "availability", label: "Availability", placeholder: "In stock, 3-4 days for delivery" },
+];
 
 const EMPTY: FormValues = {
   sku: "",
@@ -53,6 +76,14 @@ const EMPTY: FormValues = {
   dealerPrice: "",
   distributorPrice: "",
   gstPercent: "5",
+  targetCrops: "",
+  problemSolved: "",
+  dosage: "",
+  applicationMethod: "",
+  nutrientContent: "",
+  benefits: "",
+  objectionNotes: "",
+  availability: "",
 };
 
 export function ProductFormDialog({
@@ -84,6 +115,14 @@ export function ProductFormDialog({
       dealerPrice: values.dealerPrice,
       distributorPrice: values.distributorPrice,
       gstPercent: values.gstPercent,
+      targetCrops: values.targetCrops,
+      problemSolved: values.problemSolved,
+      dosage: values.dosage,
+      applicationMethod: values.applicationMethod,
+      nutrientContent: values.nutrientContent,
+      benefits: values.benefits,
+      objectionNotes: values.objectionNotes,
+      availability: values.availability,
     };
     startTransition(async () => {
       const result = isEdit
@@ -209,6 +248,27 @@ export function ProductFormDialog({
               value={values.description}
               onChange={(e) => set("description")(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-3 border-t pt-4">
+            <div>
+              <h3 className="text-sm font-medium">Agronomy details</h3>
+              <p className="text-muted-foreground text-xs">
+                Used by the AI caller when a farmer asks. Leave a field blank if it is not
+                confirmed — the agent then offers a callback instead of guessing.
+              </p>
+            </div>
+            {AGRONOMY_FIELDS.map(({ key, label, placeholder }) => (
+              <div key={key} className="space-y-1.5">
+                <Label>{label}</Label>
+                <Textarea
+                  rows={2}
+                  placeholder={placeholder}
+                  value={values[key]}
+                  onChange={(e) => set(key)(e.target.value)}
+                />
+              </div>
+            ))}
           </div>
         </div>
         <DialogFooter>

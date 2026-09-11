@@ -44,7 +44,16 @@ export async function POST(req: NextRequest) {
 
   const response = plivo.Response();
   const call = callId ? await prisma.call.findUnique({ where: { id: callId } }) : null;
+
+  // This route had no logging at all, which is exactly why the 2026-09-10
+  // failure — a lead told "connecting you now" who was then left holding —
+  // could never be traced. Every hit and every decision is recorded now.
+  console.log(
+    `[transfer] callId=${callId ?? "none"} repId=${repId ?? "none"} DialBLegStatus=${params.DialBLegStatus ?? "-"} call=${call ? "found" : "missing"}`,
+  );
+
   if (!call || !call.leadId) {
+    console.warn(`[transfer] no Call row or no leadId for callId=${callId ?? "none"} — hanging up`);
     response.addHangup({});
     return xml(response);
   }
@@ -53,6 +62,9 @@ export async function POST(req: NextRequest) {
   const dialSucceeded = params.DialBLegStatus === "answer";
 
   if (isPostDialCallback && !dialSucceeded) {
+    console.warn(
+      `[transfer] rep did not answer for callId=${call.id} (DialBLegStatus=${params.DialBLegStatus ?? "-"}) — apologising and flagging a callback`,
+    );
     response.addSpeak("Sorry, our team is unavailable right now. We will call you back soon.");
     response.addHangup({});
 
@@ -91,10 +103,12 @@ export async function POST(req: NextRequest) {
   if (isPostDialCallback && dialSucceeded) {
     // Dial completed successfully — nothing further to do, the rep and
     // lead are now talking directly.
+    console.log(`[transfer] rep answered for callId=${call.id} — lead and rep are connected`);
     return xml(response);
   }
 
   if (!repId) {
+    console.warn(`[transfer] no repId in the request for callId=${call.id} — apologising and hanging up`);
     response.addSpeak("Sorry, no representative is available. Goodbye.");
     response.addHangup({});
     return xml(response);
@@ -105,6 +119,7 @@ export async function POST(req: NextRequest) {
     where: { id: call.id },
     data: { transferredToUserId: repId },
   });
+  console.log(`[transfer] dialling rep=${repId} endpoint=${username} for callId=${call.id}, 30s timeout`);
 
   const dial = response.addDial({
     action: `${origin}/api/voice/plivo/transfer?callId=${call.id}&repId=${repId}`,

@@ -443,6 +443,15 @@ model Call {
   // to the human-picked outcome/notes above — never overwrites them.
   callMode        CallMode       @default(HUMAN)
   transcript      Json?
+  /// Structured extraction of the call: crop, acreage, quantity, objections,
+  /// purchase intent, next action. A free-text summary reads well but cannot
+  /// be queried or fed back into the next call's prompt; this can.
+  aiStructured    Json?
+  /// Per-call latency and audio-transport telemetry — see
+  /// voice-agent/pipeline/turn-metrics.ts. Stored per call rather than per
+  /// turn: the write piggybacks on the update finalizeSession already makes,
+  /// and a call's turns are always read together anyway.
+  aiMetrics       Json?
   aiSummary       String?
   aiSentiment     CallSentiment?
   aiIntentTags    String[]       @default([])
@@ -578,6 +587,26 @@ model Product {
   distributorPrice Decimal?        @db.Decimal(12, 2)
   gstPercent       Decimal         @default(5) @db.Decimal(5, 2)
   isActive         Boolean         @default(true)
+
+  // Agronomy facts the AI voice agent needs to hold a real conversation with
+  // a farmer. Before these existed it could quote a pack size and a price and
+  // nothing else, so "কত দিতে হবে বিঘা প্রতি?" — the first question anyone
+  // actually asks — had no answer.
+  //
+  // All nullable and all authored by Urvar's own agronomist. An unfilled
+  // field makes the agent say it will confirm and call back, which is the
+  // correct behaviour: a wrong dosage told to a farmer is not a UX problem,
+  // it is a ruined crop, so nothing here may ever be inferred by a model.
+  targetCrops       String?
+  problemSolved     String?
+  dosage            String?
+  applicationMethod String?
+  nutrientContent   String?
+  benefits          String?
+  /// Rep-facing notes for common pushback on this specific product.
+  objectionNotes    String?
+  availability      String?
+
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 

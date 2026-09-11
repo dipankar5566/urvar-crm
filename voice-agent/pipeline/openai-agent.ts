@@ -42,34 +42,148 @@ function leadFacts(lead: LeadBrief): string {
     .join("\n");
 }
 
-export function buildSystemPrompt(lead: LeadBrief, language: string): string {
-  return `You are an AI sales voice agent for Urvar Natural, an organic-fertilizer company in India, calling a lead to qualify their interest. This is a real, live phone call — the person can hear you speak.
+/** One catalogue row, pre-loaded into the prompt. */
+export type ProductBrief = {
+  name: string;
+  category: string;
+  unit: string;
+  packSize: string | null;
+  /** Null means no usable price is on file — say it will be confirmed. */
+  mrp: number | null;
+  description: string | null;
+  /** Agronomy detail, entered by Urvar's own team. Any of these being null is
+   * normal, and is why the prompt insists on offering to confirm rather than
+   * filling the gap. */
+  targetCrops?: string | null;
+  problemSolved?: string | null;
+  dosage?: string | null;
+  applicationMethod?: string | null;
+  nutrientContent?: string | null;
+  benefits?: string | null;
+  availability?: string | null;
+};
+
+/** What happened last time we called this lead. */
+export type PriorCallBrief = {
+  daysAgo: number;
+  outcome: string | null;
+  summary: string | null;
+};
+
+function catalogueFacts(products: ProductBrief[]): string {
+  if (products.length === 0) {
+    return "The catalogue is empty right now. Do not name or price any product. If they ask, say you will confirm the details and have someone send them.";
+  }
+  return products
+    .map((p) => {
+      const pack = [p.packSize, p.unit].filter(Boolean).join(" ");
+      const price = p.mrp != null && p.mrp > 0 ? `${p.mrp} rupees` : "price not set, must be confirmed";
+      // Only what is actually filled in reaches the model. An absent dosage is
+      // a dosage it cannot state, which is the entire point.
+      const detail = [
+        p.description,
+        p.targetCrops ? `for ${p.targetCrops}` : null,
+        p.problemSolved ? `helps with ${p.problemSolved}` : null,
+        p.dosage ? `dosage ${p.dosage}` : null,
+        p.applicationMethod ? `apply by ${p.applicationMethod}` : null,
+        p.nutrientContent ? `contains ${p.nutrientContent}` : null,
+        p.benefits ? `benefits ${p.benefits}` : null,
+        p.availability ? `availability ${p.availability}` : null,
+      ]
+        .filter(Boolean)
+        .join(". ");
+      return `- ${p.name}${pack ? ` (${pack})` : ""}: ${price}${detail ? `. ${detail}` : ""}`;
+    })
+    .join("\n");
+}
+
+function historyFacts(priorCalls: PriorCallBrief[]): string {
+  if (priorCalls.length === 0) return "";
+  const lines = priorCalls
+    .map((c) => {
+      const when = c.daysAgo <= 0 ? "today" : c.daysAgo === 1 ? "yesterday" : `${c.daysAgo} days ago`;
+      return `- ${when}${c.outcome ? ` (${c.outcome.replaceAll("_", " ").toLowerCase()})` : ""}: ${c.summary ?? "no summary"}`;
+    })
+    .join("\n");
+  return `
+Previous calls with this person — do NOT ask again what these already answer:
+${lines}
+`;
+}
+
+export function buildSystemPrompt(
+  lead: LeadBrief,
+  language: string,
+  context: { products?: ProductBrief[]; priorCalls?: PriorCallBrief[] } = {},
+): string {
+  const products = context.products ?? [];
+  const priorCalls = context.priorCalls ?? [];
+
+  return `You are a sales executive at Urvar Natural, an organic-fertilizer company in India, calling a lead. This is a real, live phone call — the person can hear you speak. You are not a bot reading a script; you are a knowledgeable person having a short, useful conversation.
 
 What we already know about this lead:
 ${leadFacts(lead)}
+${historyFacts(priorCalls)}
+Products you may discuss (this is the whole catalogue — nothing else exists):
+${catalogueFacts(products)}
+
+HOW YOU SPEAK — this matters more than anything else below:
+- Keep every turn to 5-15 words. Your FIRST sentence in a turn must be under 8 words.
+- Ask exactly ONE question per turn. Never stack two questions together.
+- React to what they just said in two or three words before you ask anything.
+- Answer only what was asked. Never volunteer information nobody asked for.
+- Let them talk more than you do. Silence after your question is fine.
+
+HOW THE CALL SHOULD GO — follow this order, but if they jump ahead, go with them:
+1. Greet them, say you are from Urvar, ask if now is a good time.
+2. If they are busy, ask when to call back, then end the call.
+3. Find out what they grow and how much land, one fact per turn.
+4. Find out what they use now, how much they need, and when.
+5. Only then suggest a product, and only one from the list above.
+6. Handle any objection without arguing and without offering a discount.
+7. Agree a next step before ending: a callback, a quotation, or a person to call them.
+
+HANDLING OBJECTIONS:
+- "Too expensive": ask what they are comparing it with before you answer.
+- "I have never used this": suggest starting with a small trial quantity.
+- "I use another company's product": ask which one and how it has worked.
+- "I will take it later": ask roughly when would suit them.
+- "Will it actually work": describe what it does. Never promise a yield figure.
+- Dealer margin, delivery, or credit terms: say our team will confirm, and book a callback.
 
 Rules:
 - Speak naturally and briefly — this is voice, not text. 1-2 short sentences per turn, never a long paragraph.
 - Your words are read aloud by a speech engine, so write how people talk, not how they write. Use plain short sentences and everyday connectives. Never use dashes, brackets, bullet points, quotes, emoji, or abbreviations like "etc." — a dash becomes an abrupt break when spoken. Write numbers and units the way you would say them.
 - Sound warm and human: greet properly, react to what they say ("achha", "thik ache") before moving on, and vary your wording instead of repeating the same phrasing every turn.
 - Start the call in ${language}, because that is this lead's regional language. If they reply in a different language, switch immediately and match them from then on, including Hindi/English/Bengali code-switching.
-- The lead's details above are already loaded — do NOT call get_lead_context unless you need something genuinely not listed there.
-- If the caller asks about price, availability, or pack size, ALWAYS call get_product_info first before answering — never say you don't have that information without checking. Use check_quotation_status when they ask about a quotation.
+- The lead's details AND the full catalogue above are already loaded — do NOT call get_lead_context or get_product_info for anything already listed there. Answer price and pack-size questions straight from the list, because a tool call is a second of silence on a live phone call. Only use get_product_info if they ask about something not on the list at all. Use check_quotation_status when they ask about a quotation.
 - You may be interrupted mid-sentence. If you are told you were cut off, do NOT restart your pitch or re-introduce yourself — answer what they just said and carry on from where you were.
 - Never re-introduce yourself or repeat a question you have already asked. If the lead only says "hello" or "bataiye", assume they simply did not catch the last line: rephrase it once, more briefly, rather than starting over.
-- NEVER read internal system data aloud. Do not mention databases, systems, fields, MRP codes, or say things like "the system shows". If get_product_info returns priceOnRequest, simply say our team will confirm the exact rate and offer to have it shared — never quote or imply a number you were not given.
-- You CANNOT transfer or connect this call to a person, and you must never say you will. If they ask to speak to someone, call schedule_follow_up and tell them our executive will call them back shortly.
-- If the caller asks not to be called again, call mark_do_not_call.
+- NEVER read internal system data aloud. Do not mention databases, systems, fields, MRP codes, or say things like "the system shows". Where the list above says a price must be confirmed, simply say our team will confirm the exact rate and offer to have it shared — never quote or imply a number you were not given.
+- Transfer to a person ONLY on a clear buying signal: they say they want to place an order, they name a quantity they intend to buy now, they ask about becoming a dealer, or they ask to speak to someone. Then call transfer_to_human and stop selling. Simply asking the price is NOT a buying signal — answer it and carry on qualifying.
+- Never say you are connecting them until the transfer has actually been made. Say something neutral like "let me get our sales person for you" and call the tool. If transfer_to_human returns an error, do not mention transferring at all: call schedule_follow_up and say our executive will call them back shortly.
+- If the caller asks not to be called again, call mark_do_not_call. Only on an explicit request. Someone who is annoyed, abrupt, or says they are not interested has NOT asked to be removed — apologise, ask if a better time would suit, and leave them on the list.
 - If they want a callback at a specific time, call schedule_follow_up.
 - End the call only when the lead has nothing further — they have said goodbye or thanks, confirmed they are done, or clearly said they are not interested. When that happens, say a brief goodbye and call end_call in the same turn. Never just stop responding.
 - NEVER end the call in the same turn the lead states a requirement, quantity, crop or delivery need. That is a buying signal, not a goodbye. Confirm what you heard, answer anything they asked, and ask whether they need anything else first.
 - Never invent product details, prices, or availability you weren't given by a tool.`;
 }
 
+/** Timings this module owns, handed back to the caller rather than logged
+ * here — server.ts holds the callId and the rest of the turn's clock, and
+ * this module has no business knowing about either. */
+export type AgentTurnTimings = {
+  requestStartedAt: number;
+  firstTokenAt: number | null;
+  hops: number;
+  tools: string[];
+};
+
 export type AgentTurnResult = {
   reply: string;
   history: ChatCompletionMessageParam[];
   controlSignal?: "end_call" | "transfer_to_human";
+  timings: AgentTurnTimings;
 };
 
 /**
@@ -88,9 +202,26 @@ export type AgentTurnResult = {
  * here rather than at each call site. */
 type CompletionStream = AsyncIterable<ChatCompletionChunk>;
 
+/**
+ * How long to wait for a live-call completion before giving up.
+ *
+ * The SDK default is 10 minutes with retries, which on a phone call is
+ * indistinguishable from a dead line — and the provider does stall: a
+ * six-scenario eval run on 2026-09-11 lost two of them to
+ * "Request timed out waiting for response headers". Measured median time to
+ * first token is ~430ms, so 6s is many times the normal case while still
+ * failing fast enough for the caller to hear the holding line instead of
+ * silence. One retry, not the SDK's default two, for the same reason.
+ */
+const LLM_REQUEST_TIMEOUT_MS = Number(process.env.VOICE_AGENT_LLM_TIMEOUT_MS) || 6000;
+
 async function createCompletion(provider: LlmProvider, body: Record<string, unknown>): Promise<CompletionStream> {
+  const requestOptions = { timeout: LLM_REQUEST_TIMEOUT_MS, maxRetries: 1 };
   try {
-    return (await provider.client.chat.completions.create(body as never)) as unknown as CompletionStream;
+    return (await provider.client.chat.completions.create(
+      body as never,
+      requestOptions,
+    )) as unknown as CompletionStream;
   } catch (err) {
     if (
       !(err instanceof OpenAI.APIError) ||
@@ -106,7 +237,10 @@ async function createCompletion(provider: LlmProvider, body: Record<string, unkn
     const retryBody = { ...body };
     delete retryBody.reasoning_effort;
     delete retryBody.verbosity;
-    return (await provider.client.chat.completions.create(retryBody as never)) as unknown as CompletionStream;
+    return (await provider.client.chat.completions.create(
+      retryBody as never,
+      requestOptions,
+    )) as unknown as CompletionStream;
   }
 }
 
@@ -150,6 +284,10 @@ const MIN_SPEAK_CHARS = 24;
 type StreamedTurn = {
   content: string;
   toolCalls: { id: string; name: string; arguments: string }[];
+  /** When the model produced anything at all — prose or the first fragment of
+   * a tool call. A price question returns a tool call with almost no prose, so
+   * counting only content would report those turns as never having started. */
+  firstTokenAt: number | null;
 };
 
 /**
@@ -172,12 +310,17 @@ async function consumeStream(
   let unspoken = "";
   /** A completed sentence too short to voice on its own yet. */
   let held = "";
+  let firstTokenAt: number | null = null;
   const byIndex = new Map<number, { id: string; name: string; arguments: string }>();
 
   for await (const chunk of stream) {
     if (isCancelled()) break;
     const delta = chunk.choices[0]?.delta;
     if (!delta) continue;
+
+    if (firstTokenAt === null && (delta.content || delta.tool_calls?.length)) {
+      firstTokenAt = Date.now();
+    }
 
     if (delta.content) {
       content += delta.content;
@@ -213,7 +356,7 @@ async function consumeStream(
   const tail = [held, unspoken.trim()].filter(Boolean).join(" ").trim();
   if (onSentence && tail && !isCancelled()) onSentence(tail);
 
-  return { content, toolCalls: [...byIndex.values()].filter((t) => t.name) };
+  return { content, toolCalls: [...byIndex.values()].filter((t) => t.name), firstTokenAt };
 }
 
 export async function runAgentTurn(
@@ -236,8 +379,15 @@ export async function runAgentTurn(
   // this also keeps a mid-turn env change from splitting one reply across
   // two providers.
   const provider = getProvider();
+  const timings: AgentTurnTimings = {
+    requestStartedAt: Date.now(),
+    firstTokenAt: null,
+    hops: 0,
+    tools: [],
+  };
 
   for (let hop = 0; hop < MAX_TOOL_HOPS; hop++) {
+    timings.hops = hop + 1;
     // Reasoning depth and the token-limit field name both differ per
     // provider and are supplied by completionBody — this is a live phone
     // call, so every second of hidden reasoning before the first token is
@@ -247,12 +397,15 @@ export async function runAgentTurn(
       completionBody(provider, { messages, tools: CRM_TOOLS, stream: true }, 200),
     );
 
-    const { content, toolCalls } = await consumeStream(stream, onSentence, isCancelled);
+    const { content, toolCalls, firstTokenAt } = await consumeStream(stream, onSentence, isCancelled);
+    // Only the first hop's first token is the caller's perceived latency;
+    // later hops are already behind spoken audio or a filler word.
+    if (timings.firstTokenAt === null) timings.firstTokenAt = firstTokenAt;
 
     if (isCancelled()) {
       // Barge-in: the caller is already talking over this reply, so record
       // what was generated and let the next turn take over.
-      return { reply: content.trim(), history: messages, controlSignal };
+      return { reply: content.trim(), history: messages, controlSignal, timings };
     }
 
     messages.push(
@@ -272,10 +425,11 @@ export async function runAgentTurn(
     if (toolCalls.length === 0) {
       // No tool calls — this was the model's spoken reply, already streamed
       // out sentence by sentence above.
-      return { reply: content.trim(), history: messages, controlSignal };
+      return { reply: content.trim(), history: messages, controlSignal, timings };
     }
 
     for (const call of toolCalls) {
+      timings.tools.push(call.name);
       const result = await executeCrmTool(call.name, call.arguments, toolCtx);
       if (result.controlSignal) controlSignal = result.controlSignal;
       messages.push({
@@ -302,9 +456,14 @@ export async function runAgentTurn(
       const closing = await consumeStream(closingStream, onSentence, isCancelled);
       const closingText = closing.content.trim();
       if (closingText) messages.push({ role: "assistant", content: closingText });
-      return { reply: closingText, history: messages, controlSignal };
+      return { reply: closingText, history: messages, controlSignal, timings };
     }
   }
 
-  return { reply: "Sorry, let me have someone call you back.", history: messages, controlSignal: "end_call" };
+  return {
+    reply: "Sorry, let me have someone call you back.",
+    history: messages,
+    controlSignal: "end_call",
+    timings,
+  };
 }

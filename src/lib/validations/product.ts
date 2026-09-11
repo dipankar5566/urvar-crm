@@ -27,6 +27,18 @@ export const productFormSchema = z.object({
   distributorPrice: optionalNumber,
   gstPercent: z.coerce.number().min(0).max(100),
   isActive: z.boolean().optional().default(true),
+
+  // Agronomy detail the AI voice agent reads out to farmers. Optional
+  // everywhere: a blank field makes the agent promise a callback, which is
+  // the right answer, whereas a guessed dosage is a ruined crop.
+  targetCrops: optionalText,
+  problemSolved: optionalText,
+  dosage: optionalText,
+  applicationMethod: optionalText,
+  nutrientContent: optionalText,
+  benefits: optionalText,
+  objectionNotes: optionalText,
+  availability: optionalText,
 });
 
 export type ProductFormInput = z.input<typeof productFormSchema>;

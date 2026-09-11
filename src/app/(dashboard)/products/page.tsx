@@ -99,6 +99,14 @@ export default async function ProductsPage() {
                             dealerPrice: product.dealerPrice?.toString() ?? "",
                             distributorPrice: product.distributorPrice?.toString() ?? "",
                             gstPercent: product.gstPercent.toString(),
+                            targetCrops: product.targetCrops ?? "",
+                            problemSolved: product.problemSolved ?? "",
+                            dosage: product.dosage ?? "",
+                            applicationMethod: product.applicationMethod ?? "",
+                            nutrientContent: product.nutrientContent ?? "",
+                            benefits: product.benefits ?? "",
+                            objectionNotes: product.objectionNotes ?? "",
+                            availability: product.availability ?? "",
                           }}
                         />
                         <ProductActiveToggle productId={product.id} isActive={product.isActive} />

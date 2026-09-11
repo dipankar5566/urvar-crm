@@ -42,6 +42,14 @@ export async function createProduct(input: ProductFormInput): Promise<ActionResu
         distributorPrice: data.distributorPrice,
         gstPercent: data.gstPercent,
         isActive: data.isActive,
+        targetCrops: data.targetCrops,
+        problemSolved: data.problemSolved,
+        dosage: data.dosage,
+        applicationMethod: data.applicationMethod,
+        nutrientContent: data.nutrientContent,
+        benefits: data.benefits,
+        objectionNotes: data.objectionNotes,
+        availability: data.availability,
       },
     });
     revalidatePath("/products");
@@ -94,6 +102,14 @@ export async function updateProduct(
         distributorPrice: data.distributorPrice,
         gstPercent: data.gstPercent,
         isActive: data.isActive,
+        targetCrops: data.targetCrops,
+        problemSolved: data.problemSolved,
+        dosage: data.dosage,
+        applicationMethod: data.applicationMethod,
+        nutrientContent: data.nutrientContent,
+        benefits: data.benefits,
+        objectionNotes: data.objectionNotes,
+        availability: data.availability,
       },
     });
     revalidatePath("/products");
