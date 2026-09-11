@@ -34,15 +34,19 @@ export default async function DistributorsPage({
   const scope = can(user.role, "customers", "read");
   const showRepFilter = scope === "all" || scope === "territory";
 
-  const where: Record<string, unknown> = {
-    ...scopeWhere(scope, user, "assignedToId"),
-    customerType: params.customerType
-      ? params.customerType
-      : { in: DISTRIBUTOR_TYPES },
+  // See leads/page.tsx for why this is AND rather than a spread: scope and
+  // these filters can collide on the same key (territory's `state`, own's
+  // `assignedToId`), and a spread lets whichever is assigned later silently
+  // win — which is how a territory restriction previously got erased by
+  // `?state=AnyState`.
+  const filters: Record<string, unknown> = {
+    customerType: params.customerType ? params.customerType : { in: DISTRIBUTOR_TYPES },
   };
-  if (params.state) where.state = params.state;
-  if (params.assignedToId === "UNASSIGNED") where.assignedToId = null;
-  else if (params.assignedToId) where.assignedToId = params.assignedToId;
+  if (params.state) filters.state = params.state;
+  if (params.assignedToId === "UNASSIGNED") filters.assignedToId = null;
+  else if (params.assignedToId) filters.assignedToId = params.assignedToId;
+
+  const where = { AND: [scopeWhere(scope, user, "assignedToId"), filters] };
 
   const [customers, reps] = await Promise.all([
     prisma.customer.findMany({

@@ -33,14 +33,22 @@ export default async function LeadsPage({
   const scope = can(user.role, "leads", "read");
   const showRepFilter = scope === "all" || scope === "territory";
 
-  const where: Record<string, unknown> = {
-    ...scopeWhere(scope, user, "assignedToId"),
-  };
-  if (params.status) where.status = params.status;
-  if (params.source) where.source = params.source;
-  if (params.state) where.state = params.state;
-  if (params.assignedToId === "UNASSIGNED") where.assignedToId = null;
-  else if (params.assignedToId) where.assignedToId = params.assignedToId;
+  // Kept as a separate AND branch rather than spread into one object: scope
+  // and these filters can target the same key (a territory scope's `state`,
+  // an own scope's `assignedToId`), and spreading them together lets the
+  // later key silently win — a plain `where.state = params.state` after the
+  // spread erased a DISTRIBUTOR_MANAGER's territory restriction entirely, so
+  // `?state=AnyState` returned other territories' leads. AND keeps both
+  // conditions in force; if they conflict the query returns nothing rather
+  // than the wrong rows.
+  const filters: Record<string, unknown> = {};
+  if (params.status) filters.status = params.status;
+  if (params.source) filters.source = params.source;
+  if (params.state) filters.state = params.state;
+  if (params.assignedToId === "UNASSIGNED") filters.assignedToId = null;
+  else if (params.assignedToId) filters.assignedToId = params.assignedToId;
+
+  const where = { AND: [scopeWhere(scope, user, "assignedToId"), filters] };
 
   const [leads, reps] = await Promise.all([
     prisma.lead.findMany({
