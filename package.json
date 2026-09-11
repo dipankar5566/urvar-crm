@@ -14,7 +14,9 @@
     "db:seed": "prisma db seed",
     "db:clean-demo": "tsx prisma/clean-demo-data.ts",
     "db:studio": "prisma studio",
-    "voice-agent:dev": "tsx watch voice-agent/server.ts"
+    "voice-agent:dev": "tsx watch voice-agent/server.ts",
+    "tts:samples": "tsx voice-agent/scripts/tts-samples.ts",
+    "eval:agent": "tsx voice-agent/scripts/eval-agent.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
