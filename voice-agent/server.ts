@@ -101,10 +101,15 @@ const CLOSING_PLAY_MS = 4000;
 const BARGE_HOLD_MAX_MS = 600;
 /** ~2s of 16kHz 16-bit mono. Second safety net, in case the timer is starved. */
 const HELD_AUDIO_MAX_BYTES = 64_000;
-/** After a committed barge-in, TTS keeps streaming the cancelled sentence's
- * tail; drop it rather than play it over the lead. Bounded because the next
- * turn's audio cannot arrive faster than time-to-first-token anyway. */
-const TTS_DISCARD_MIN_MS = 400;
+/** Bytes of 16kHz 16-bit mono audio per millisecond — one millisecond is
+ * exactly 32 bytes, which is what lets playback time be computed locally
+ * rather than waited on. */
+const AUDIO_BYTES_PER_MS = 32;
+/** How long to assume we are speaking after handing text to TTS but before any
+ * of its audio has arrived. Measured first-byte latency is ~230ms, so this only
+ * has to outlast that; erring short risks an extra turn, erring long costs the
+ * caller silence, and silence is the worse failure. */
+const TTS_FIRST_BYTE_GRACE_MS = 800;
 /** Kill switch, same revert-in-seconds pattern as VOICE_AGENT_LLM_PROVIDER:
  * set to "final-only" and restart to get exactly the previous behaviour. */
 const TWO_STAGE_BARGE_IN = (process.env.VOICE_AGENT_BARGE_IN ?? "two-stage") !== "final-only";
@@ -140,10 +145,15 @@ type CallSession = {
   plivoWs: WebSocket | null;
   agentHistory: ChatCompletionMessageParam[];
   agentTurnInFlight: boolean;
-  /** True between handing text to TTS and Plivo confirming it finished
-   * playing — the difference between "the lead interrupted me" and "the
-   * lead is answering me". */
-  aiSpeaking: boolean;
+  /** When the audio we have actually sent will finish playing, computed from
+   * bytes sent rather than waited on. Plivo's `playedStream` ack is the
+   * documented signal but it is not dependable — on one call it never arrived
+   * at all, leaving the agent permanently "still speaking", which silently
+   * swallowed every lead utterance as a backchannel for 44 seconds. */
+  audioPlayingUntil: number;
+  /** Covers the gap between handing text to TTS and its first audio arriving,
+   * so a turn isn't treated as finished before it has made a sound. */
+  speechPendingUntil: number;
   /** Bumped per utterance so each checkpoint ack maps to its own utterance
    * and a stale ack can't clear a newer one. */
   utteranceSeq: number;
@@ -170,10 +180,10 @@ type CallSession = {
   finalized: boolean;
 
   // --- Two-stage barge-in ---
-  /** How TTS audio is routed right now. "holding" is a provisional barge-in
-   * (Stage A, nothing destroyed yet); "discarding" drains the tail of a
-   * sentence that has already been cut off. */
-  ttsGate: "open" | "holding" | "discarding";
+  /** How TTS audio is routed right now. "holding" is a provisional barge-in —
+   * Stage A, nothing destroyed yet. A committed barge-in doesn't need a gate
+   * state: it resets the TTS socket so the cancelled audio never arrives. */
+  ttsGate: "open" | "holding";
   heldAudio: Buffer[];
   heldAudioBytes: number;
   /** Which VAD utterance opened the current hold, so a stale partial from an
@@ -181,9 +191,7 @@ type CallSession = {
   holdUtteranceIdx: number | null;
   holdTimer: NodeJS.Timeout | null;
   holdStartedAt: number | null;
-  /** Drop TTS chunks until this time even after the gate reopens. */
-  discardUntil: number;
-  /** Stage B already cleared aiSpeaking; the final still has to tell the model
+  /** Stage B already stopped playback; the final still has to tell the model
    * it was cut off. */
   bargeCommitted: boolean;
   vadStartedAt: number | null;
@@ -256,7 +264,8 @@ function createSession(
     plivoWs: null,
     agentHistory: [],
     agentTurnInFlight: false,
-    aiSpeaking: false,
+    audioPlayingUntil: 0,
+    speechPendingUntil: 0,
     utteranceSeq: 0,
     cancelTurn: false,
     pendingUtterance: null,
@@ -280,7 +289,6 @@ function createSession(
     holdUtteranceIdx: null,
     holdTimer: null,
     holdStartedAt: null,
-    discardUntil: 0,
     bargeCommitted: false,
     vadStartedAt: null,
 
@@ -322,15 +330,10 @@ function getOrCreateAssistSession(callId: string): CallSession {
  */
 function speakWithCheckpoint(session: CallSession, text: string) {
   if (!session.ttsSession) return;
-  // A new deliberate utterance supersedes the one that was cut off, so the
-  // discard window must not swallow it. Not reopened from "holding": if the
-  // lead is still mid-hold, this sentence joins the held buffer rather than
-  // jumping the queue.
-  if (session.ttsGate === "discarding") {
-    session.ttsGate = "open";
-    session.discardUntil = 0;
-  }
-  session.aiSpeaking = true;
+  // Hold the "we are speaking" state open until this utterance's audio shows
+  // up, so the gap between handing text to TTS and hearing it back isn't
+  // mistaken for the turn having ended.
+  session.speechPendingUntil = Date.now() + TTS_FIRST_BYTE_GRACE_MS;
   // Single choke point for everything the caller hears — streamed sentences,
   // filler words, the closing line and the holding line — so the speech
   // filter cannot be bypassed by adding another call site later.
@@ -426,6 +429,14 @@ async function recordOutcomeIfMissing(callId: string, session: CallSession, tran
   }
 }
 
+/** Emits the pending turn's telemetry line, once its audio timings have had a
+ * chance to be filled in. Safe to call repeatedly. */
+function flushTurnLog(session: CallSession) {
+  if (!session.currentTurn) return;
+  console.log(formatTurnLog(session.currentTurn));
+  session.currentTurn = null;
+}
+
 /** Gathered once, then used twice: the log line and the stored `aiMetrics`. */
 function callMetrics(callId: string, session: CallSession): CallMetricsSnapshot {
   const { gaps, longGaps } = session.frameStats;
@@ -454,6 +465,8 @@ async function finalizeSession(callId: string, session: CallSession) {
   if (session.finalized) return;
   session.finalized = true;
   clearCallTimers(session);
+  // The last turn of the call has no successor to flush it.
+  flushTurnLog(session);
 
   session.sttSession?.close();
   session.ttsSession?.close();
@@ -594,18 +607,20 @@ function sendPlayAudio(ws: WebSocket, chunk: Buffer) {
  *
  * Deliberately has no logging: this runs dozens of times per turn.
  */
+/**
+ * Whether the caller can currently hear us.
+ *
+ * Derived from audio we have actually sent plus a short grace for audio still
+ * being synthesized — deliberately not from Plivo's `playedStream` ack, which
+ * a real call proved can simply never arrive.
+ */
+function isSpeaking(session: CallSession): boolean {
+  return Date.now() < Math.max(session.audioPlayingUntil, session.speechPendingUntil);
+}
+
 function routeTtsChunk(session: CallSession, callId: string, chunk: Buffer) {
   const ws = session.plivoWs;
   if (ws?.readyState !== WebSocket.OPEN) return;
-
-  if (session.ttsGate === "discarding") {
-    // Self-expiring: a turn that produces no further speech (a tool-only hop,
-    // say) would otherwise leave the gate shut and mute the rest of the call
-    // until something happened to call speakWithCheckpoint again.
-    if (Date.now() < session.discardUntil) return;
-    session.ttsGate = "open";
-    session.discardUntil = 0;
-  }
 
   if (session.ttsGate === "holding") {
     session.heldAudio.push(chunk);
@@ -618,6 +633,12 @@ function routeTtsChunk(session: CallSession, callId: string, chunk: Buffer) {
 
   sendPlayAudio(ws, chunk);
   session.ttsBytesSent += chunk.length;
+  // Plivo plays what we send in order, so each chunk extends the end of
+  // playback by exactly its own duration.
+  session.audioPlayingUntil =
+    Math.max(Date.now(), session.audioPlayingUntil) + chunk.length / AUDIO_BYTES_PER_MS;
+  // Real audio is flowing, so the pre-audio grace has served its purpose.
+  session.speechPendingUntil = 0;
   if (session.currentTurn && session.currentTurn.firstPlayAudioAt === null) {
     session.currentTurn.firstPlayAudioAt = Date.now();
   }
@@ -627,9 +648,14 @@ function routeTtsChunk(session: CallSession, callId: string, chunk: Buffer) {
  * this is free to be wrong: a cough resumes with the line intact. */
 function beginHold(session: CallSession, callId: string, event: SttVadEvent) {
   session.vadStartedAt = Date.now();
-  // Nothing playing means nothing to protect, and a second VAD hit inside an
-  // existing hold must not restart the deadline.
-  if (!session.aiSpeaking || session.ttsGate !== "open") return;
+  // A second VAD hit inside an existing hold must not restart the deadline.
+  if (session.ttsGate !== "open") return;
+  // Only hold once real audio is already queued at Plivo. Holding the *first*
+  // chunk of an utterance leaves Plivo sitting behind a checkpoint we have
+  // already sent it with nothing to play through, and it then never acks —
+  // which stranded call cmtxegf29 in permanent "still speaking" state and
+  // cost it every turn after the greeting.
+  if (session.audioPlayingUntil <= Date.now()) return;
 
   session.ttsGate = "holding";
   session.holdUtteranceIdx = event.utteranceIdx;
@@ -666,11 +692,18 @@ function commitBargeIn(
   session.holdStartedAt = null;
 
   session.cancelTurn = true;
-  session.aiSpeaking = false;
   session.bargeCommitted = true;
-  session.ttsGate = "discarding";
-  session.discardUntil = Date.now() + TTS_DISCARD_MIN_MS;
+  session.ttsGate = "open";
   session.interruptionCount++;
+  // We just told Plivo to drop its queue, so nothing of ours is audible.
+  session.audioPlayingUntil = 0;
+  session.speechPendingUntil = 0;
+  // Sarvam keeps synthesizing the sentence we just abandoned and its frames
+  // carry no utterance id, so a time window cannot tell that tail apart from
+  // the next reply — on call cmtxep7wb the leftover audio reached the caller
+  // 3.7s before the new turn had written a word, and the two played together.
+  // Replacing the socket is what actually stops it.
+  session.ttsSession?.reset();
   if (session.currentTurn) session.currentTurn.bargeStage = "B";
 
   if (session.plivoWs?.readyState === WebSocket.OPEN) {
@@ -710,6 +743,10 @@ function resumeHeldAudio(session: CallSession, callId: string, reason: string) {
     for (const chunk of held) {
       sendPlayAudio(ws, chunk);
       session.ttsBytesSent += chunk.length;
+      // Resumed audio is still audio: it has to extend the playback clock, or
+      // the agent would look finished while the caller can still hear it.
+      session.audioPlayingUntil =
+        Math.max(Date.now(), session.audioPlayingUntil) + chunk.length / AUDIO_BYTES_PER_MS;
     }
   }
   console.log(
@@ -894,7 +931,20 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
         // Plivo has drained its queue, so continuing to hold would create
         // real silence rather than merely deferring audio.
         if (session.ttsGate === "holding") resumeHeldAudio(session, callId, "played-through");
-        session.aiSpeaking = false;
+        // Corroborates the local clock rather than being trusted alone. Only
+        // the newest checkpoint means everything queued has played: a turn
+        // that spoke two sentences gets an ack for the first while the second
+        // is still audible, and winding the clock back then would declare the
+        // agent silent mid-sentence.
+        const isNewest = msg.name === `utt-${session.utteranceSeq}`;
+        const overshoot = Math.max(0, session.audioPlayingUntil - Date.now());
+        if (isNewest) {
+          session.audioPlayingUntil = 0;
+          session.speechPendingUntil = 0;
+        }
+        console.log(
+          `[call ${callId}] playedStream ack name=${String(msg.name ?? "-")} newest=${isNewest} (local clock ${overshoot}ms ahead)`,
+        );
         // The AI just stopped talking — start counting silence from here,
         // not from whenever the lead last spoke.
         armSilenceTimer(session, callId);
@@ -1056,7 +1106,8 @@ function setupAutonomousStream(session: CallSession, callId: string) {
         // not — someone saying "haan" is not a dead line.
         armSilenceTimer(session, callId);
 
-        if (session.aiSpeaking && isBackchannel(text)) {
+        const speaking = isSpeaking(session);
+        if (speaking && isBackchannel(text)) {
           // Stage A may have held audio on the way to this "achha" — give it
           // back so the sentence the lead was agreeing with still finishes.
           if (session.ttsGate === "holding") resumeHeldAudio(session, callId, "backchannel-final");
@@ -1069,9 +1120,9 @@ function setupAutonomousStream(session: CallSession, callId: string) {
 
         // Stage B may already have committed on the partial; either way the
         // model has to be told it was cut off.
-        const interrupted = session.aiSpeaking || session.bargeCommitted;
+        const interrupted = speaking || session.bargeCommitted;
         session.bargeCommitted = false;
-        if (session.aiSpeaking) {
+        if (speaking) {
           // Still talking, so Stage B never fired — this is the old
           // final-transcript path, which is also the degraded path whenever
           // VAD is unavailable.
@@ -1127,6 +1178,9 @@ async function runNextAgentTurn(
   // Fresh turn: whatever cancelled the previous one no longer applies.
   session.cancelTurn = false;
   console.log(`[call ${callId}] agent turn starting for: "${userUtterance.slice(0, 120)}"`);
+
+  // Flush the previous turn now that its audio has had time to land.
+  flushTurnLog(session);
 
   session.turnCount++;
   const trigger: TurnTrigger =
@@ -1281,8 +1335,10 @@ async function runNextAgentTurn(
       session.ttftSamples.push(metrics.firstTokenAt - metrics.startedAt);
     }
     session.totalSamples.push(metrics.endedAt - metrics.startedAt);
-    session.currentTurn = null;
-    console.log(formatTurnLog(metrics));
+    // Deliberately NOT logged here. This runs the moment the model stops
+    // generating, which is before its audio has been synthesized and played —
+    // logging now reported `tts=-1 play=-1` on turns that audibly spoke. The
+    // line is flushed when the next turn starts, or at finalize.
 
     if (queued && !session.endingCall) {
       console.log(`[call ${callId}] answering queued utterance: "${queued.slice(0, 60)}"`);

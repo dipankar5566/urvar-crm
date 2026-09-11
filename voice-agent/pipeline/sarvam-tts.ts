@@ -42,6 +42,10 @@ export type SarvamTtsSession = {
    * without this the tail of a turn waits on the next turn's text or an
    * internal timeout. */
   flush: () => void;
+  /** Abandons everything in flight after a barge-in, by replacing the socket.
+   * The next `speak()` is queued and flushed automatically once the new
+   * connection is up. */
+  reset: () => void;
   close: () => void;
 };
 
@@ -94,7 +98,18 @@ export function createSarvamTtsSession(opts: {
   let configSent = false;
   let closedByCaller = false;
   let audioChunksReceived = 0;
-  let pendingText: string | null = null;
+  /** Utterances handed over while the socket was down. A queue, not a single
+   * slot: a turn can stream two sentences inside the ~250ms reconnect, and the
+   * old single-slot version silently dropped the first one. */
+  const pendingText: string[] = [];
+  /** A flush asked for while disconnected. Without replaying it after
+   * reconnect, Sarvam sits on the queued text waiting for more — the exact
+   * failure this file's header warns about. */
+  let pendingFlush = false;
+  /** Bumped by every (re)connect. Handlers capture it and go silent once a
+   * newer socket has superseded them, so audio synthesized for an utterance
+   * we have already abandoned can never reach the caller. */
+  let generation = 0;
 
   function sendText(text: string) {
     console.log(`[sarvam-tts] speak: "${text.slice(0, 150)}"`);
@@ -102,6 +117,7 @@ export function createSarvamTtsSession(opts: {
   }
 
   function connect() {
+    const myGeneration = ++generation;
     const sock = new WebSocket(url, {
       headers: { "API-SUBSCRIPTION-KEY": apiKey },
     });
@@ -144,14 +160,22 @@ export function createSarvamTtsSession(opts: {
       );
       configSent = true;
       console.log("[sarvam-tts] connected, config sent");
-      if (pendingText !== null) {
-        const text = pendingText;
-        pendingText = null;
-        sendText(text);
+      if (pendingText.length > 0) {
+        for (const text of pendingText.splice(0, pendingText.length)) sendText(text);
+        // Anything queued was a complete utterance, so it needs synthesizing
+        // now rather than waiting on the next turn's text.
+        pendingFlush = true;
+      }
+      if (pendingFlush) {
+        pendingFlush = false;
+        sock.send(JSON.stringify({ type: "flush", data: {} }));
       }
     });
 
     sock.on("message", (data, isBinary) => {
+      // A reset has replaced this socket: whatever it is still synthesizing
+      // belongs to an utterance the caller has abandoned.
+      if (myGeneration !== generation) return;
       if (isBinary) {
         audioChunksReceived++;
         if (audioChunksReceived === 1 || audioChunksReceived % 20 === 0) {
@@ -187,7 +211,9 @@ export function createSarvamTtsSession(opts: {
 
     sock.on("close", (code, reason) => {
       console.log(`[sarvam-tts] closed, code=${code}, reason=${reason.toString().slice(0, 200)}, chunksReceived=${audioChunksReceived}`);
-      if (!closedByCaller) {
+      // Only the newest socket may trigger a reconnect — a socket torn down by
+      // reset() has already been replaced.
+      if (!closedByCaller && myGeneration === generation) {
         console.log("[sarvam-tts] unexpected close mid-call — reconnecting");
         connect();
       }
@@ -204,14 +230,36 @@ export function createSarvamTtsSession(opts: {
         sendText(text);
         return;
       }
-      // Mid-(re)connect — queue the latest utterance instead of dropping it;
-      // it's flushed once the new socket's config round-trip completes.
+      // Mid-(re)connect — queue the utterance instead of dropping it; the
+      // queue is drained and flushed once the config round-trip completes.
       console.log(`[sarvam-tts] speak() queued — configSent=${configSent}, readyState=${ws.readyState}`);
-      pendingText = text;
+      pendingText.push(text);
     },
     flush() {
-      if (closedByCaller || !configSent || ws.readyState !== WebSocket.OPEN) return;
+      if (closedByCaller) return;
+      if (!configSent || ws.readyState !== WebSocket.OPEN) {
+        pendingFlush = true;
+        return;
+      }
       ws.send(JSON.stringify({ type: "flush", data: {} }));
+    },
+    reset() {
+      if (closedByCaller) return;
+      // Sarvam has no "stop synthesizing" control message and its audio frames
+      // carry no utterance id, so there is no way to tell the tail of a
+      // cancelled sentence from the start of the next one. Replacing the
+      // socket is the only thing that actually guarantees silence: the old
+      // generation's handlers stop forwarding immediately, even before the
+      // close completes. Queued text is dropped with it — it belonged to the
+      // utterance being abandoned.
+      const previous = ws;
+      pendingText.length = 0;
+      pendingFlush = false;
+      connect();
+      if (previous.readyState === WebSocket.OPEN || previous.readyState === WebSocket.CONNECTING) {
+        previous.close();
+      }
+      console.log("[sarvam-tts] reset — socket replaced, cancelled audio dropped");
     },
     close() {
       closedByCaller = true;
