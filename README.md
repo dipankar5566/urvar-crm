@@ -86,15 +86,22 @@ Two enforcement layers:
    clause per scope (`all` / `territory` / `own` / `none`). Matrix in
    `src/lib/permissions.ts`.
 
-## Build Roadmap
+## Status
 
-- **Sprint 0 (done)** — scaffolding, auth, DB, schema, RBAC, dashboard shell, seed.
-- **Sprint 1 (done)** — Leads (CRUD, filters, activity timeline) + Pipeline Kanban (`@dnd-kit`), stage↔status sync, lead-to-customer conversion.
-- **Sprint 2 (done)** — Calls (quick-log + history), Follow-ups (overdue/today/upcoming views, complete/reschedule/cancel), Tasks (assignment, status, due-date views), in-app Notification bell on lead/task assignment.
-- **Sprint 3** — Customers / Distributors / Dealers.
-- **Sprint 4** — Products + Quotations + PDF.
-- **Sprint 5** — Dashboard charts + Reports (CSV/Excel).
-- **Sprint 6** — Audit logs + RBAC hardening + polish.
+All core modules are implemented: Leads, Pipeline, Calls, Follow-ups, Tasks,
+Customers/Distributors/Dealers, Products, Quotations, Reports, Audit logs,
+and Procurement (Purchases). See `CLAUDE.md` for module-by-module detail,
+RBAC specifics, and recent fixes.
 
-Phase 2 (deferred): WhatsApp/Email integration, AI lead scoring/forecasting,
-mobile field app with GPS, Docker/AWS deployment.
+Beyond the original scope, the app also has a Plivo-based AI voice calling
+agent (bilingual English/Hindi/Bengali) that can autonomously handle
+outbound sales calls, Sarvam-powered document intelligence for extracting
+data from uploaded invoices/lead documents, and Leaflet/OpenStreetMap-based
+customer geolocation.
+
+Deployed to production at `crm.urvarindia.com` via PM2 + Cloudflare Tunnel
+on the same Windows box used for local dev — not the Docker/AWS path
+originally planned.
+
+Remaining from the original Phase 2 scope: WhatsApp/Email integration and a
+dedicated mobile field app with GPS.
