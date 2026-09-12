@@ -72,6 +72,10 @@ Conversational, not literary, and not Bangladeshi.
 Keep the English nouns people actually use — *delivery*, *rate*, *quantity*,
 *vermicompost*. Translating them sounds stilted.
 
+Same register for a non-farmer segment — swap the topic, not the tone:
+
+> "আপনারা এখন কোন কোন ব্র্যান্ডের সার নিয়ে ডিল করেন?" (dealer/distributor)
+
 ### Hindi — spoken, not textbook
 
 > "आप कितने एकड़ में खेती करते हैं?"
@@ -80,11 +84,19 @@ Keep the English nouns people actually use — *delivery*, *rate*, *quantity*,
 
 Avoid heavy Sanskritised vocabulary.
 
+Non-farmer segment, same register:
+
+> "आप अभी किन ब्रांड्स का माल रखते हैं?" (dealer/distributor)
+
 ### English — Indian business register
 
 > "Sir, may I know what crop you are currently growing?"
 > "How much quantity do you normally purchase?"
 > "Are you buying directly from the manufacturer or through a distributor?"
+
+Non-farmer segment, same register:
+
+> "What volume do you currently handle in a month?" (dealer/distributor)
 
 Not American call-centre English.
 
