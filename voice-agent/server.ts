@@ -114,6 +114,31 @@ const TTS_FIRST_BYTE_GRACE_MS = 800;
  * set to "final-only" and restart to get exactly the previous behaviour. */
 const TWO_STAGE_BARGE_IN = (process.env.VOICE_AGENT_BARGE_IN ?? "two-stage") !== "final-only";
 
+/** How long to hold a single-word, non-backchannel final before dispatching
+ * it as its own agent turn, in case it was only the first fragment of one
+ * answer that Sarvam's VAD (silence_duration_ms=300) split on a mid-sentence
+ * pause. Real bug: a lead answering "Amra ... Harmicompost" (2026-09-13,
+ * cmtzvvkuy) arrived as two finals, and the agent answered "Amra" alone with
+ * an apology plus a verbatim repeat of its own question. 600ms comfortably
+ * clears the 300ms VAD gap without being long enough to read as a stall. */
+const FRAGMENT_COALESCE_MS = Number(process.env.VOICE_AGENT_COALESCE_MS) || 600;
+
+/**
+ * True only for a single content word that isn't a recognized backchannel
+ * ("haan", "achha", ...) — i.e. it reads like the start of a sentence that
+ * got cut off, not a complete short answer. Deliberately narrow: a number or
+ * short phrase ("6 ton", "15 tarikh") is two tokens and dispatches at once,
+ * so this only adds latency to the specific shape that caused the bug.
+ */
+function looksLikeFragment(text: string): boolean {
+  const words = text
+    .trim()
+    .replace(/[^\p{L}\p{N}\p{M}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length === 1 && !isBackchannel(text);
+}
+
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
@@ -163,6 +188,13 @@ type CallSession = {
   /** Something the lead said while a reply was still generating, held so it
    * gets answered instead of dropped. */
   pendingUtterance: string | null;
+  /** Holds a single-word, non-backchannel final for FRAGMENT_COALESCE_MS in
+   * case Sarvam's VAD split one answer across a short mid-sentence pause
+   * ("Amra" / "Harmicompost" on one real call) — see looksLikeFragment. */
+  coalesceTimer: NodeJS.Timeout | null;
+  coalesceText: string | null;
+  coalesceSpokeAt: number | null;
+  coalesceInterrupted: boolean;
   /** Language detection runs once per call, not per utterance. */
   languageDetected: boolean;
   endingCall: boolean;
@@ -269,6 +301,10 @@ function createSession(
     utteranceSeq: 0,
     cancelTurn: false,
     pendingUtterance: null,
+    coalesceTimer: null,
+    coalesceText: null,
+    coalesceSpokeAt: null,
+    coalesceInterrupted: false,
     languageDetected: false,
     endingCall: false,
     transferred: false,
@@ -374,13 +410,20 @@ function armSilenceTimer(session: CallSession, callId: string) {
 }
 
 function clearCallTimers(session: CallSession) {
-  for (const t of [session.silenceTimer, session.maxCallTimer, session.fillerTimer, session.holdTimer]) {
+  for (const t of [
+    session.silenceTimer,
+    session.maxCallTimer,
+    session.fillerTimer,
+    session.holdTimer,
+    session.coalesceTimer,
+  ]) {
     if (t) clearTimeout(t);
   }
   session.silenceTimer = null;
   session.maxCallTimer = null;
   session.fillerTimer = null;
   session.holdTimer = null;
+  session.coalesceTimer = null;
 }
 
 function pushToAssist(session: CallSession, message: unknown) {
@@ -1129,7 +1172,7 @@ function setupAutonomousStream(session: CallSession, callId: string) {
           commitBargeIn(session, callId, "final", text);
         }
 
-        void runNextAgentTurn(session, callId, text, interrupted, Date.now());
+        dispatchOrCoalesce(session, callId, text, interrupted);
       },
       onError: (err) => console.error(`[call ${callId}] sarvam-stt error`, err),
     });
@@ -1137,6 +1180,51 @@ function setupAutonomousStream(session: CallSession, callId: string) {
     console.error(`[call ${callId}] failed to start STT/TTS session, ending call`, err);
     session.plivoWs?.close();
   }
+}
+
+/** (Re)arms the timer that flushes whatever is sitting in session.coalesceText,
+ * reading the fields at fire time rather than closing over them, since
+ * nothing else touches them between now and then in this single-threaded
+ * event loop. */
+function scheduleCoalesceFlush(session: CallSession, callId: string) {
+  if (session.coalesceTimer) clearTimeout(session.coalesceTimer);
+  session.coalesceTimer = setTimeout(() => {
+    session.coalesceTimer = null;
+    const text = session.coalesceText;
+    const interrupted = session.coalesceInterrupted;
+    const spokeAt = session.coalesceSpokeAt ?? Date.now();
+    session.coalesceText = null;
+    session.coalesceSpokeAt = null;
+    session.coalesceInterrupted = false;
+    if (text) void runNextAgentTurn(session, callId, text, interrupted, spokeAt);
+  }, FRAGMENT_COALESCE_MS);
+}
+
+/** Entry point for every STT final. See FRAGMENT_COALESCE_MS: a lone fragment
+ * gets held briefly instead of becoming its own turn, so a second fragment
+ * arriving right after it merges into one answer instead of triggering a
+ * confused "sorry, repeat that" reply to the first half alone. */
+function dispatchOrCoalesce(session: CallSession, callId: string, text: string, interrupted: boolean) {
+  const spokeAt = Date.now();
+
+  if (session.coalesceText !== null) {
+    session.coalesceText = `${session.coalesceText} ${text}`;
+    session.coalesceInterrupted = session.coalesceInterrupted || interrupted;
+    console.log(`[call ${callId}] coalescing fragment onto held utterance: "${text}"`);
+    scheduleCoalesceFlush(session, callId);
+    return;
+  }
+
+  if (!session.agentTurnInFlight && looksLikeFragment(text)) {
+    session.coalesceText = text;
+    session.coalesceSpokeAt = spokeAt;
+    session.coalesceInterrupted = interrupted;
+    console.log(`[call ${callId}] holding lone fragment for ${FRAGMENT_COALESCE_MS}ms: "${text}"`);
+    scheduleCoalesceFlush(session, callId);
+    return;
+  }
+
+  void runNextAgentTurn(session, callId, text, interrupted, spokeAt);
 }
 
 function triggerGreeting(session: CallSession, callId: string) {
