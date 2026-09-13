@@ -12,6 +12,7 @@ import {
 } from "@/lib/validations/quotation";
 import { generateOrderNumber, generateQuotationNumber } from "@/lib/id-sequences";
 import { notifyUser } from "@/lib/notifications";
+import { notifyQuotationSent } from "@/lib/quotation-notify";
 import { logAudit } from "@/lib/audit";
 
 type ActionResult = { error: string } | { success: true; id?: string };
@@ -350,6 +351,13 @@ export async function updateQuotationStatus(
       relatedCustomerId: existing.customerId ?? undefined,
       relatedLeadId: existing.leadId ?? undefined,
     });
+  }
+
+  // Actually deliver it to the customer. Best-effort by design: the status
+  // change above is already committed and must stand even if email/WhatsApp
+  // fails, so this never throws and records each attempt in MessageLog.
+  if (status === "SENT") {
+    await notifyQuotationSent(quotationId, user.id, user.email);
   }
 
   revalidatePath("/quotations");

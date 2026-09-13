@@ -61,6 +61,33 @@ export function assertUploadAllowed(file: File): void {
   }
 }
 
+/** Field-visit photos are phone camera shots, never sent to Sarvam. */
+const ALLOWED_PHOTO_MIME = new Set(["image/jpeg", "image/png"]);
+export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Validates a field-visit check-in photo.
+ *
+ * Deliberately separate from assertUploadAllowed: that one gates what gets
+ * sent to Sarvam's document API and is bounded by MAX_DOCUMENT_BYTES for that
+ * reason. A check-in photo never goes near Sarvam, so borrowing that limit
+ * would tie an unrelated feature's ceiling to a document service's. Only the
+ * storage helpers below are shared, and those care about neither.
+ */
+export function assertPhotoUploadAllowed(file: File): void {
+  if (file.size === 0) {
+    throw new UploadRejected("That photo is empty.");
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    throw new UploadRejected(
+      `That photo is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_PHOTO_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  if (!ALLOWED_PHOTO_MIME.has(file.type)) {
+    throw new UploadRejected("Upload a JPG or PNG photo.");
+  }
+}
+
 /**
  * Writes an uploaded document to disk under a server-generated id.
  *

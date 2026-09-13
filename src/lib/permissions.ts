@@ -24,6 +24,7 @@ export type Module =
   | "quotations"
   | "products"
   | "purchases"
+  | "field_visits"
   | "reports"
   | "users"
   | "audit";
@@ -52,6 +53,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     quotations: FULL,
     products: FULL,
     purchases: FULL,
+    field_visits: FULL,
     reports: READ_ALL,
     users: FULL,
     audit: READ_ALL,
@@ -69,6 +71,9 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     // Supplier prices reveal margin: a sales role that can see both the
     // purchase price and the quoted price knows the markup on every deal.
     purchases: NONE,
+    // Reads every rep's visits — the point of check-ins is oversight — but
+    // cannot delete one, so the record of who was where cannot be rewritten.
+    field_visits: { read: "all", write: "all", delete: "none" },
     reports: READ_ALL,
     users: NONE,
     audit: NONE,
@@ -84,6 +89,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     quotations: OWN_RW,
     products: READ_ALL,
     purchases: NONE,
+    field_visits: OWN_RW,
     reports: { read: "own", write: "none", delete: "none" },
     users: NONE,
     audit: NONE,
@@ -100,6 +106,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     quotations: TERRITORY_R,
     products: READ_ALL,
     purchases: NONE,
+    field_visits: { read: "own", write: "own", delete: "none" },
     reports: TERRITORY_R,
     users: NONE,
     audit: NONE,
@@ -116,6 +123,9 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     products: READ_ALL,
     // Procurement is finance's job — deleting an invoice is not, so no delete.
     purchases: { read: "all", write: "all", delete: "none" },
+    // Field visits are a sales-supervision record with nothing financial in
+    // them; accounts has no reason to see which rep stood where.
+    field_visits: NONE,
     reports: READ_ALL,
     users: NONE,
     audit: NONE,

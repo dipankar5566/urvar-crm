@@ -25,6 +25,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileId:
   const leadScope = can(user.role, "leads", "read");
   const customerScope = can(user.role, "customers", "read");
   const quotationScope = can(user.role, "quotations", "read");
+  const fieldVisitScope = can(user.role, "field_visits", "read");
 
   const visible = [
     leadScope !== "none" ? { relatedLead: { is: scopeWhere(leadScope, user, "assignedToId") } } : null,
@@ -40,6 +41,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileId:
     // invoice scan and read supplier pricing off it.
     can(user.role, "purchases", "read") !== "none"
       ? { relatedPurchaseInvoiceId: { not: null } }
+      : null,
+    // Field-visit photos are scoped on the visit's own owner (userId), not on
+    // the lead/customer it was attached to — that is how the field_visits
+    // module defines "own", and a rep's photo should follow their visit
+    // rather than inherit whoever the record is assigned to.
+    fieldVisitScope !== "none"
+      ? { relatedFieldVisit: { is: scopeWhere(fieldVisitScope, user, "userId") } }
       : null,
   ].filter((clause) => clause !== null);
 

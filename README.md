@@ -52,16 +52,17 @@ All accounts use password **`Urvar@123`**:
 
 ```
 prisma/
-  schema.prisma          # full normalized schema (19 models)
+  schema.prisma          # full normalized schema (24 models)
   seed.ts                # demo data (users, products, leads, customers, quotations…)
 prisma.config.ts         # Prisma 7 config (datasource url lives here, not in schema)
+instrumentation.ts       # starts the due-reminder cron on server boot
 src/
   app/
     (auth)/login/        # login page + form
     (dashboard)/         # authenticated app shell (sidebar + topbar)
       dashboard/         # KPI dashboard (role-scoped metrics)
-      leads/ pipeline/ calls/ follow-ups/ tasks/
-      customers/ products/ quotations/ reports/
+      leads/ pipeline/ calls/ follow-ups/ tasks/ field-visits/
+      customers/ products/ quotations/ purchases/ reports/
       users/ audit-logs/ # Super Admin only
     api/auth/[...all]/   # Better Auth handler
   components/
@@ -89,19 +90,27 @@ Two enforcement layers:
 ## Status
 
 All core modules are implemented: Leads, Pipeline, Calls, Follow-ups, Tasks,
-Customers/Distributors/Dealers, Products, Quotations, Reports, Audit logs,
-and Procurement (Purchases). See `CLAUDE.md` for module-by-module detail,
-RBAC specifics, and recent fixes.
+Field Visits, Customers/Distributors/Dealers, Products, Quotations, Reports,
+Audit logs, and Procurement (Purchases). See `CLAUDE.md` for module-by-module
+detail, RBAC specifics, and recent fixes.
 
 Beyond the original scope, the app also has a Plivo-based AI voice calling
 agent (bilingual English/Hindi/Bengali) that can autonomously handle
 outbound sales calls, Sarvam-powered document intelligence for extracting
-data from uploaded invoices/lead documents, and Leaflet/OpenStreetMap-based
-customer geolocation.
+data from uploaded invoices/lead documents, Leaflet/OpenStreetMap-based
+customer geolocation, and a GPS-stamped field check-in/check-out log for
+reps visiting a lead or customer in person.
+
+A quotation marked Sent emails the customer a PDF copy (SMTP via Zoho Mail)
+and is logged either way in `MessageLog`; WhatsApp delivery for the same
+event is implemented but ships switched off pending a Meta-approved
+template. Follow-ups and tasks that pass their due date get an in-app +
+email reminder from an in-process cron.
 
 Deployed to production at `crm.urvarindia.com` via PM2 + Cloudflare Tunnel
 on the same Windows box used for local dev — not the Docker/AWS path
 originally planned.
 
-Remaining from the original Phase 2 scope: WhatsApp/Email integration and a
-dedicated mobile field app with GPS.
+Remaining from the original Phase 2 scope: activating the WhatsApp template
+(pending Meta approval) and a dedicated mobile field app — field visits
+today are a web-based check-in/check-out, not a native app.

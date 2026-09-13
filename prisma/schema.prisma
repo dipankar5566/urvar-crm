@@ -190,6 +190,7 @@ enum NotificationType {
   LEAD_ASSIGNED
   QUOTATION_RESPONSE
   TASK_ASSIGNED
+  TASK_DUE
   STAGE_CHANGE
   GENERAL
 }
@@ -200,9 +201,26 @@ enum NotificationChannel {
   WHATSAPP
 }
 
+/// Why an outbound message was sent. Separate from NotificationType, which
+/// describes an in-app notification's subject: a MessageLog row is a record of
+/// something that left the building over EMAIL or WHATSAPP.
+enum MessagePurpose {
+  QUOTATION_SENT
+  FOLLOWUP_REMINDER
+  GENERAL
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
 enum FileCategory {
   QUOTATION_PDF
   ATTACHMENT
+  FIELD_VISIT_PHOTO
 }
 
 // ============================================================
@@ -252,6 +270,8 @@ model User {
   pipelineMoves    PipelineStageHistory[]
   uploadedFiles    File[]
   notifications    Notification[]
+  sentMessages     MessageLog[]
+  fieldVisits      FieldVisit[]
   auditLogs        AuditLog[]
 
   @@index([role])
@@ -363,6 +383,8 @@ model Lead {
   quotations Quotation[]
   orders     Order[]
   notifications Notification[]
+  messageLogs   MessageLog[]
+  fieldVisits   FieldVisit[]
   files      File[]
 
   @@index([status])
@@ -511,10 +533,16 @@ model Task {
   priority          TaskPriority @default(MEDIUM)
   status            TaskStatus   @default(OPEN)
   completedAt       DateTime?
+  /// Set once the due-reminder cron has emailed/notified the assignee, so a
+  /// task that stays open past its due date is not re-reminded every tick.
+  /// Mirrors FollowUp.reminderSentAt.
+  reminderSentAt    DateTime?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
   @@index([assignedToId, status])
+  /// The due-reminder cron scans on dueAt + reminderSentAt, not assignee.
+  @@index([status, dueAt])
 }
 
 model Customer {
@@ -566,6 +594,8 @@ model Customer {
   quotations    Quotation[]
   orders        Order[]
   notifications Notification[]
+  messageLogs   MessageLog[]
+  fieldVisits   FieldVisit[]
   files         File[]
 
   @@index([customerType])
@@ -640,9 +670,10 @@ model Quotation {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
-  items QuotationItem[]
-  order Order?
-  files File[]
+  items       QuotationItem[]
+  order       Order?
+  files       File[]
+  messageLogs MessageLog[]
 
   @@index([status])
   @@index([customerId])
@@ -709,6 +740,45 @@ model Notification {
   @@index([userId, isRead])
 }
 
+/// A record of an outbound message that actually left the building — email or
+/// WhatsApp — to a lead or customer. Notification (above) is the in-app
+/// inbox for our own staff; this is the ledger of what we sent to the outside
+/// world, including failures, so "did the customer ever get the quotation?"
+/// has an answer that does not depend on the provider's own dashboard.
+///
+/// Attaches to either a Lead or a Customer, never both, exactly like Call.
+model MessageLog {
+  id          String    @id @default(cuid())
+  leadId      String?
+  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// The quotation this message was about, when it was about one.
+  quotationId String?
+  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  /// Null for a message the due-reminder cron sent with no human behind it.
+  sentById    String?
+  sentBy      User?     @relation(fields: [sentById], references: [id])
+
+  channel     NotificationChannel
+  purpose     MessagePurpose
+  /// The address or number actually dialled/mailed, captured as sent rather
+  /// than re-read off the lead/customer later, which may have since changed.
+  recipient   String
+  /// Email subject, or the WhatsApp template name for a template message.
+  subject     String?
+
+  status            MessageDeliveryStatus @default(QUEUED)
+  providerMessageId String?
+  errorMessage      String?
+  createdAt         DateTime              @default(now())
+  deliveredAt       DateTime?
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([quotationId])
+}
+
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
@@ -741,6 +811,9 @@ model File {
   // The scanned supplier invoice this record was created from.
   relatedPurchaseInvoiceId String?
   relatedPurchaseInvoice   PurchaseInvoice? @relation(fields: [relatedPurchaseInvoiceId], references: [id], onDelete: Cascade)
+  // A photo taken at a field visit (shop front, crop, site).
+  relatedFieldVisitId String?
+  relatedFieldVisit   FieldVisit? @relation(fields: [relatedFieldVisitId], references: [id], onDelete: Cascade)
   uploadedById       String
   uploadedBy         User         @relation(fields: [uploadedById], references: [id])
   createdAt          DateTime     @default(now())
@@ -749,6 +822,49 @@ model File {
   @@index([relatedLeadId])
   @@index([relatedCustomerId])
   @@index([relatedPurchaseInvoiceId])
+  @@index([relatedFieldVisitId])
+}
+
+/// A rep's visit to a lead or customer in the field, captured on their phone.
+///
+/// The coordinates live here rather than on the lead/customer because they
+/// answer a different question: Customer.latitude/longitude is where the shop
+/// *is*, while this is where the rep *was*, at a time, on one occasion. A Lead
+/// has no location columns at all, so for leads this is the only spatial
+/// record there is.
+///
+/// checkOut* stay null while a visit is open — at most one open visit per rep
+/// at a time, enforced in the check-in action rather than by constraint.
+model FieldVisit {
+  id         String    @id @default(cuid())
+  leadId     String?
+  lead       Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+
+  checkInAt       DateTime @default(now())
+  checkInLat      Float
+  checkInLng      Float
+  /// Metres of uncertainty the browser reported, kept so a wildly imprecise
+  /// fix (a desktop on wifi) is distinguishable from a real GPS one.
+  checkInAccuracy Float?
+
+  checkOutAt       DateTime?
+  checkOutLat      Float?
+  checkOutLng      Float?
+  checkOutAccuracy Float?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  files File[]
+
+  @@index([leadId])
+  @@index([customerId])
+  @@index([userId, checkInAt])
 }
 
 /// Procurement — the inbound side of the business. Everything else in this
