@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/session";
+import { requireRole, requireUser } from "@/lib/session";
 import { assertCan, scopeWhere } from "@/lib/permissions";
 import {
   customerFormSchema,
@@ -124,7 +124,7 @@ export async function updateCustomer(
   const data = parsed.data;
 
   const existing = await prisma.customer.findFirst({
-    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!existing) return { error: "Customer not found or access denied." };
 
@@ -197,7 +197,7 @@ export async function updateCustomerLocation(
   const { latitude, longitude } = parsed.data;
 
   const existing = await prisma.customer.findFirst({
-    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     select: { id: true, latitude: true, longitude: true },
   });
   if (!existing) return { error: "Customer not found or access denied." };
@@ -225,7 +225,7 @@ export async function clearCustomerLocation(customerId: string): Promise<ActionR
   const scope = assertCan(user.role, "customers", "write");
 
   const existing = await prisma.customer.findFirst({
-    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     select: { id: true, latitude: true, longitude: true },
   });
   if (!existing) return { error: "Customer not found or access denied." };
@@ -245,5 +245,44 @@ export async function clearCustomerLocation(customerId: string): Promise<ActionR
   });
 
   revalidatePath(`/customers/${customerId}`);
+  return { success: true };
+}
+
+/**
+ * Soft-deletes a customer — see deleteLead in leads/actions.ts for the same
+ * reasoning. Orders and quotations already raised against this customer keep
+ * resolving the relation; the customer just stops being listed or selectable.
+ *
+ * Deliberately separate from `isActive`: deactivating a customer is a
+ * commercial state ("we don't sell to them right now") that still belongs in
+ * the list, deleting is "this record shouldn't be here at all".
+ */
+export async function deleteCustomer(customerId: string): Promise<ActionResult> {
+  const user = await requireRole(["SUPER_ADMIN"]);
+  assertCan(user.role, "customers", "delete");
+
+  const existing = await prisma.customer.findFirst({
+    where: { id: customerId, deletedAt: null },
+    select: { id: true, name: true, customerNumber: true },
+  });
+  if (!existing) return { error: "Customer not found." };
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { deletedAt: new Date() },
+  });
+
+  revalidatePath("/customers");
+  revalidatePath("/customers/distributors");
+  revalidatePath("/dashboard");
+
+  await logAudit({
+    userId: user.id,
+    action: "DELETE",
+    entityType: "Customer",
+    entityId: customerId,
+    oldValue: { name: existing.name, customerNumber: existing.customerNumber },
+  });
+
   return { success: true };
 }

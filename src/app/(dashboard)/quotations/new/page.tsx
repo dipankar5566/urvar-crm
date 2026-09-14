@@ -19,13 +19,17 @@ export default async function NewQuotationPage({
 
   const [customers, leads, products] = await Promise.all([
     prisma.customer.findMany({
-      where: scopeWhere(customerScope, user, "assignedToId"),
+      where: { ...scopeWhere(customerScope, user, "assignedToId"), deletedAt: null },
       select: { id: true, name: true, customerNumber: true },
       orderBy: { name: "asc" },
       take: 500,
     }),
     prisma.lead.findMany({
-      where: { ...scopeWhere(leadScope, user, "assignedToId"), convertedAt: null },
+      where: {
+        ...scopeWhere(leadScope, user, "assignedToId"),
+        convertedAt: null,
+        deletedAt: null,
+      },
       select: { id: true, name: true, leadNumber: true },
       orderBy: { name: "asc" },
       take: 500,

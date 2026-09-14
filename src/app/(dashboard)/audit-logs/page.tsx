@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
@@ -40,21 +41,31 @@ export default async function AuditLogsPage({
   if (params.action) where.action = params.action;
   if (params.userId) where.userId = params.userId;
 
-  const [logs, users] = await Promise.all([
+  const PAGE_SIZE = 200;
+  const page = Math.max(1, Number(params.page) || 1);
+
+  const [logs, totalCount, users] = await Promise.all([
     prisma.auditLog.findMany({
       where,
       include: { user: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
-      take: 200,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
+    prisma.auditLog.count({ where }),
     prisma.user.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Audit Logs"
-        subtitle={`System-wide audit trail of every mutating action. Showing the most recent ${logs.length}.`}
+        subtitle={
+          totalPages > 1
+            ? `System-wide audit trail — ${totalCount} entries, showing page ${page} of ${totalPages}.`
+            : `System-wide audit trail of every mutating action. Showing the most recent ${logs.length}.`
+        }
       />
 
       <AuditLogFilters entityTypes={ENTITY_TYPES} actions={ACTIONS} users={users} />
@@ -129,6 +140,8 @@ export default async function AuditLogsPage({
           </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

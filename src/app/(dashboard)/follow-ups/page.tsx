@@ -15,6 +15,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { FOLLOWUP_STATUS_LABELS } from "@/lib/constants/labels";
 import { FollowUpRowActions } from "./follow-up-row-actions";
 
@@ -28,9 +29,9 @@ const VIEWS = [
 export default async function FollowUpsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; page?: string }>;
 }) {
-  const { view = "overdue" } = await searchParams;
+  const { view = "overdue", page: pageParam } = await searchParams;
   const user = await requireUser();
   const scope = can(user.role, "followups", "read");
   const showAssignee = scope === "all";
@@ -53,21 +54,33 @@ export default async function FollowUpsPage({
     where.dueAt = { gt: todayEnd };
   }
 
-  const followUps = await prisma.followUp.findMany({
-    where,
-    include: {
-      lead: { select: { id: true, name: true, leadNumber: true } },
-      assignedTo: { select: { name: true } },
-    },
-    orderBy: { dueAt: "asc" },
-    take: 200,
-  });
+  const PAGE_SIZE = 200;
+  const page = Math.max(1, Number(pageParam) || 1);
+
+  const [followUps, totalCount] = await Promise.all([
+    prisma.followUp.findMany({
+      where,
+      include: {
+        lead: { select: { id: true, name: true, leadNumber: true } },
+        assignedTo: { select: { name: true } },
+      },
+      orderBy: { dueAt: "asc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.followUp.count({ where }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Follow-ups"
-        subtitle={`${followUps.length} follow-up${followUps.length === 1 ? "" : "s"} in this view.`}
+        subtitle={
+          totalPages > 1
+            ? `${totalCount} follow-ups in this view — showing page ${page} of ${totalPages}.`
+            : `${followUps.length} follow-up${followUps.length === 1 ? "" : "s"} in this view.`
+        }
       />
 
       <div className="flex gap-1 rounded-lg border bg-card p-1 w-fit">
@@ -145,6 +158,8 @@ export default async function FollowUpsPage({
         </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

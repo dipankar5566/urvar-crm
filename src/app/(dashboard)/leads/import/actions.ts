@@ -39,14 +39,16 @@ async function evaluateRows(
 
   const [existingLeads, existingCustomers] = await Promise.all([
     phonesToCheck.length
+      // Deleted records don't block a re-import: their phone number is free
+      // to use again, which is the point of having deleted them.
       ? prisma.lead.findMany({
-          where: { phone: { in: phonesToCheck } },
+          where: { phone: { in: phonesToCheck }, deletedAt: null },
           select: { phone: true, leadNumber: true },
         })
       : Promise.resolve([]),
     phonesToCheck.length
       ? prisma.customer.findMany({
-          where: { phone: { in: phonesToCheck } },
+          where: { phone: { in: phonesToCheck }, deletedAt: null },
           select: { phone: true, customerNumber: true },
         })
       : Promise.resolve([]),

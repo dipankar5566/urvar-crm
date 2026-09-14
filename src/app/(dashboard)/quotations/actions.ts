@@ -77,7 +77,7 @@ async function assertTargetInScope(
   if (customerId) {
     const scope = can(user.role, "customers", "read");
     const customer = await prisma.customer.findFirst({
-      where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+      where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     });
     if (!customer) throw new Error("Customer not found or access denied.");
     return customer;
@@ -85,7 +85,7 @@ async function assertTargetInScope(
   if (leadId) {
     const scope = can(user.role, "leads", "read");
     const lead = await prisma.lead.findFirst({
-      where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+      where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     });
     if (!lead) throw new Error("Lead not found or access denied.");
     return lead;

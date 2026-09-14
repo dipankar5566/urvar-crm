@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/session";
 import { assertCan, can } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
@@ -30,23 +31,36 @@ const inr = (value: number) =>
  * and never see the page or the nav entry, because supplier prices reveal
  * the margin on every deal.
  */
-export default async function PurchasesPage() {
+export default async function PurchasesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await requireUser();
   assertCan(user.role, "purchases", "read");
   const canWrite = can(user.role, "purchases", "write") !== "none";
 
-  const invoices = await prisma.purchaseInvoice.findMany({
-    orderBy: { invoiceDate: "desc" },
-    take: 200,
-    select: {
-      id: true,
-      invoiceNumber: true,
-      invoiceDate: true,
-      totalAmount: true,
-      supplier: { select: { name: true, supplierCode: true } },
-      _count: { select: { items: true } },
-    },
-  });
+  const PAGE_SIZE = 200;
+  const params = await searchParams;
+  const page = Math.max(1, Number(params.page) || 1);
+
+  const [invoices, totalCount] = await Promise.all([
+    prisma.purchaseInvoice.findMany({
+      orderBy: { invoiceDate: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      select: {
+        id: true,
+        invoiceNumber: true,
+        invoiceDate: true,
+        totalAmount: true,
+        supplier: { select: { name: true, supplierCode: true } },
+        _count: { select: { items: true } },
+      },
+    }),
+    prisma.purchaseInvoice.count(),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-4">
@@ -67,7 +81,9 @@ export default async function PurchasesPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            {invoices.length} invoice{invoices.length === 1 ? "" : "s"}
+            {totalPages > 1
+              ? `${totalCount} invoices — page ${page} of ${totalPages}`
+              : `${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -110,6 +126,8 @@ export default async function PurchasesPage() {
           )}
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

@@ -37,12 +37,13 @@ export default async function DashboardPage() {
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
-  // Role-scoped lead filter (assignedToId for "own", state for "territory").
-  const leadScope = scopeWhere(
-    can(user.role, "leads", "read"),
-    user,
-    "assignedToId",
-  );
+  // Role-scoped lead filter (assignedToId for "own", state for "territory"),
+  // plus the soft-delete exclusion every lead read carries — folded in here
+  // because every query below spreads this, so none of them can forget it.
+  const leadScope = {
+    ...scopeWhere(can(user.role, "leads", "read"), user, "assignedToId"),
+    deletedAt: null,
+  };
 
   const [
     newLeadsToday,

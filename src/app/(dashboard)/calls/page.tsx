@@ -14,15 +14,16 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { CALL_DIRECTION_LABELS, CALL_OUTCOME_LABELS } from "@/lib/constants/labels";
 import { CallFilters } from "./call-filters";
 
 export default async function CallsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ outcome?: string; direction?: string; today?: string }>;
+  searchParams: Promise<{ outcome?: string; direction?: string; today?: string; page?: string }>;
 }) {
-  const { outcome, direction, today } = await searchParams;
+  const { outcome, direction, today, page: pageParam } = await searchParams;
   const user = await requireUser();
   const scope = can(user.role, "calls", "read");
   const showRep = scope === "all";
@@ -36,22 +37,34 @@ export default async function CallsPage({
     where.calledAt = { gte: startOfDay(new Date()), lte: endOfDay(new Date()) };
   }
 
-  const calls = await prisma.call.findMany({
-    where,
-    include: {
-      lead: { select: { id: true, name: true, leadNumber: true } },
-      customer: { select: { id: true, name: true, customerNumber: true } },
-      user: { select: { name: true } },
-    },
-    orderBy: { calledAt: "desc" },
-    take: 200,
-  });
+  const PAGE_SIZE = 200;
+  const page = Math.max(1, Number(pageParam) || 1);
+
+  const [calls, totalCount] = await Promise.all([
+    prisma.call.findMany({
+      where,
+      include: {
+        lead: { select: { id: true, name: true, leadNumber: true } },
+        customer: { select: { id: true, name: true, customerNumber: true } },
+        user: { select: { name: true } },
+      },
+      orderBy: { calledAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.call.count({ where }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Calls"
-        subtitle={`${calls.length} call${calls.length === 1 ? "" : "s"} logged.`}
+        subtitle={
+          totalPages > 1
+            ? `${totalCount} calls logged — showing page ${page} of ${totalPages}.`
+            : `${calls.length} call${calls.length === 1 ? "" : "s"} logged.`
+        }
       />
 
       <CallFilters />
@@ -141,6 +154,8 @@ export default async function CallsPage({
         </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

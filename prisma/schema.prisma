@@ -372,6 +372,8 @@ model Lead {
   convertedCustomer Customer? @relation("LeadConversion")
   convertedAt       DateTime?
 
+  deletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -584,6 +586,8 @@ model Customer {
   sourceLead   Lead?   @relation("LeadConversion", fields: [sourceLeadId], references: [id])
 
   isActive Boolean @default(true)
+
+  deletedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

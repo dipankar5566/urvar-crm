@@ -49,7 +49,7 @@ export default async function CustomerDetailPage({
   const callScope = can(user.role, "calls", "read");
 
   const customer = await prisma.customer.findFirst({
-    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     include: {
       assignedTo: { select: { id: true, name: true } },
       sourceLead: { select: { id: true, leadNumber: true } },

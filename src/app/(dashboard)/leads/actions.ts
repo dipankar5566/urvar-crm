@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/session";
+import { requireRole, requireUser } from "@/lib/session";
 import { assertCan, scopeWhere } from "@/lib/permissions";
 import {
   leadFormSchema,
@@ -142,7 +142,7 @@ export async function updateLead(
   const data = parsed.data;
 
   const existing = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!existing) return { error: "Lead not found or access denied." };
 
@@ -234,7 +234,7 @@ export async function updateLeadStatus(
   const data = parsed.data;
 
   const existing = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!existing) return { error: "Lead not found or access denied." };
 
@@ -280,7 +280,7 @@ export async function updateLeadAssignee(
   const scope = assertCan(user.role, "leads", "write");
 
   const existing = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!existing) return { error: "Lead not found or access denied." };
 
@@ -349,7 +349,7 @@ export async function addLeadNote(
   if (!trimmed) return { error: "Note cannot be empty." };
 
   const existing = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!existing) return { error: "Lead not found or access denied." };
 
@@ -374,7 +374,7 @@ export async function updateLeadStage(
   const scope = assertCan(user.role, "pipeline", "write");
 
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     include: { pipeline: true },
   });
   if (!lead || !lead.pipeline) return { error: "Lead not found or access denied." };
@@ -434,7 +434,7 @@ export async function convertLead(leadId: string): Promise<ActionResult> {
   const scope = assertCan(user.role, "leads", "write");
 
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     include: { pipeline: true },
   });
   if (!lead) return { error: "Lead not found or access denied." };
@@ -516,4 +516,43 @@ export async function convertLead(leadId: string): Promise<ActionResult> {
     }
   }
   return { error: "Could not convert lead. Please try again." };
+}
+
+/**
+ * Soft-deletes a lead: the row stays, gains a `deletedAt`, and drops out of
+ * every query that lists or looks up leads. Everything already pointing at it
+ * — a logged call, a sent quotation — keeps resolving the relation and still
+ * shows the name, because only a lead's own reads are filtered.
+ *
+ * Double-gated on purpose: `requireRole` is the coarse check and `assertCan`
+ * the matrix one, matching users/actions.ts. Delete is Super Admin only.
+ */
+export async function deleteLead(leadId: string): Promise<ActionResult> {
+  const user = await requireRole(["SUPER_ADMIN"]);
+  assertCan(user.role, "leads", "delete");
+
+  const existing = await prisma.lead.findFirst({
+    where: { id: leadId, deletedAt: null },
+    select: { id: true, name: true, leadNumber: true },
+  });
+  if (!existing) return { error: "Lead not found." };
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { deletedAt: new Date() },
+  });
+
+  revalidatePath("/leads");
+  revalidatePath("/pipeline");
+  revalidatePath("/dashboard");
+
+  await logAudit({
+    userId: user.id,
+    action: "DELETE",
+    entityType: "Lead",
+    entityId: leadId,
+    oldValue: { name: existing.name, leadNumber: existing.leadNumber },
+  });
+
+  return { success: true };
 }

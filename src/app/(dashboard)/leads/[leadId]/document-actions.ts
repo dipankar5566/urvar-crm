@@ -68,7 +68,7 @@ async function loadWritableLead(leadId: string) {
   const user = await requireUser();
   const scope = assertCan(user.role, "leads", "write");
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   return { user, lead };
 }
@@ -169,7 +169,7 @@ export async function listLeadDocuments(leadId: string) {
   const user = await requireUser();
   const scope = assertCan(user.role, "leads", "read");
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
     select: { id: true },
   });
   if (!lead) return [];

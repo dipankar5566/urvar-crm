@@ -15,6 +15,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { TASK_PRIORITY_LABELS } from "@/lib/constants/labels";
 import { TaskForm } from "./task-form";
 import { TaskStatusSelect } from "./task-status-select";
@@ -29,9 +30,9 @@ const VIEWS = [
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; page?: string }>;
 }) {
-  const { view = "all" } = await searchParams;
+  const { view = "all", page: pageParam } = await searchParams;
   const user = await requireUser();
   const scope = can(user.role, "tasks", "read");
   const canAssign = can(user.role, "tasks", "write") === "all";
@@ -56,15 +57,23 @@ export default async function TasksPage({
     where.dueAt = { gt: todayEnd };
   }
 
-  const tasks = await prisma.task.findMany({
-    where,
-    include: {
-      assignedTo: { select: { name: true } },
-      relatedLead: { select: { id: true, name: true } },
-    },
-    orderBy: [{ status: "asc" }, { dueAt: "asc" }],
-    take: 200,
-  });
+  const PAGE_SIZE = 200;
+  const page = Math.max(1, Number(pageParam) || 1);
+
+  const [tasks, totalCount] = await Promise.all([
+    prisma.task.findMany({
+      where,
+      include: {
+        assignedTo: { select: { name: true } },
+        relatedLead: { select: { id: true, name: true } },
+      },
+      orderBy: [{ status: "asc" }, { dueAt: "asc" }],
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.task.count({ where }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const reps = canAssign
     ? await prisma.user.findMany({
@@ -80,7 +89,11 @@ export default async function TasksPage({
     <div className="space-y-6">
       <PageHeader
         title="Tasks"
-        subtitle={`${tasks.length} task${tasks.length === 1 ? "" : "s"} in this view.`}
+        subtitle={
+          totalPages > 1
+            ? `${totalCount} tasks in this view — showing page ${page} of ${totalPages}.`
+            : `${tasks.length} task${tasks.length === 1 ? "" : "s"} in this view.`
+        }
         action={
           writeAccess && (
             <TaskForm reps={reps} canAssign={canAssign} currentUserId={user.id} />
@@ -171,6 +184,8 @@ export default async function TasksPage({
         </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

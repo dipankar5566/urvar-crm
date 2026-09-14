@@ -47,6 +47,7 @@ export async function getLeadsReport(user: ReportUser, filters: ReportFilters) {
   const where: Record<string, unknown> = {
     ...scopeWhere(scope, user, "assignedToId"),
     createdAt: { gte: filters.from, lte: filters.to },
+    deletedAt: null,
   };
   if (filters.state) where.state = filters.state;
   if (filters.repId) where.assignedToId = filters.repId === "UNASSIGNED" ? null : filters.repId;
@@ -164,7 +165,10 @@ export async function getRepLeaderboard(user: ReportUser, filters: ReportFilters
   const scope = can(user.role, "reports", "read");
   if (scope !== "all" && scope !== "territory") return [];
 
-  const where: Record<string, unknown> = { createdAt: { gte: filters.from, lte: filters.to } };
+  const where: Record<string, unknown> = {
+    createdAt: { gte: filters.from, lte: filters.to },
+    deletedAt: null,
+  };
   if (scope === "territory") where.state = { in: user.territoryStates };
   if (filters.state) where.state = filters.state;
 

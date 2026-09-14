@@ -6,6 +6,9 @@ import { CustomerFilters } from "../customer-filters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
+import { DeleteRowButton } from "@/components/delete-row-button";
+import { deleteCustomer } from "../actions";
 import {
   Table,
   TableBody,
@@ -33,6 +36,8 @@ export default async function DistributorsPage({
   const params = await searchParams;
   const scope = can(user.role, "customers", "read");
   const showRepFilter = scope === "all" || scope === "territory";
+  // Delete is Super Admin only; the action re-checks, this just hides the button.
+  const canDelete = can(user.role, "customers", "delete") !== "none";
 
   // See leads/page.tsx for why this is AND rather than a spread: scope and
   // these filters can collide on the same key (territory's `state`, own's
@@ -46,15 +51,22 @@ export default async function DistributorsPage({
   if (params.assignedToId === "UNASSIGNED") filters.assignedToId = null;
   else if (params.assignedToId) filters.assignedToId = params.assignedToId;
 
-  const where = { AND: [scopeWhere(scope, user, "assignedToId"), filters] };
+  const where = {
+    AND: [scopeWhere(scope, user, "assignedToId"), filters, { deletedAt: null }],
+  };
 
-  const [customers, reps] = await Promise.all([
+  const PAGE_SIZE = 200;
+  const page = Math.max(1, Number(params.page) || 1);
+
+  const [customers, totalCount, reps] = await Promise.all([
     prisma.customer.findMany({
       where,
       include: { assignedTo: { select: { id: true, name: true } } },
       orderBy: { createdAt: "desc" },
-      take: 200,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
+    prisma.customer.count({ where }),
     showRepFilter
       ? prisma.user.findMany({
           where: { isActive: true },
@@ -63,6 +75,7 @@ export default async function DistributorsPage({
         })
       : Promise.resolve([]),
   ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const typeOptions: [string, string][] = DISTRIBUTOR_TYPES.map((t) => [
     t,
@@ -73,7 +86,11 @@ export default async function DistributorsPage({
     <div className="space-y-6">
       <PageHeader
         title="Distributors & Dealers"
-        subtitle={`${customers.length} distributor${customers.length === 1 ? "" : "s"}/dealer${customers.length === 1 ? "" : "s"} in your view.`}
+        subtitle={
+          totalPages > 1
+            ? `${totalCount} distributors/dealers in your view — showing page ${page} of ${totalPages}.`
+            : `${customers.length} distributor${customers.length === 1 ? "" : "s"}/dealer${customers.length === 1 ? "" : "s"} in your view.`
+        }
       />
 
       <CustomerFilters
@@ -95,13 +112,14 @@ export default async function DistributorsPage({
                 <TableHead>Annual Target</TableHead>
                 <TableHead>Outstanding</TableHead>
                 {showRepFilter && <TableHead>Assigned To</TableHead>}
+                {canDelete && <TableHead className="w-10" />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {customers.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={showRepFilter ? 7 : 6}
+                    colSpan={(showRepFilter ? 7 : 6) + (canDelete ? 1 : 0)}
                     className="py-10 text-center text-muted-foreground"
                   >
                     No distributors or dealers match these filters.
@@ -150,12 +168,24 @@ export default async function DistributorsPage({
                       )}
                     </TableCell>
                   )}
+                  {canDelete && (
+                    <TableCell className="text-right">
+                      <DeleteRowButton
+                        label="distributor"
+                        name={customer.name}
+                        reference={customer.customerNumber}
+                        onDelete={deleteCustomer.bind(null, customer.id)}
+                      />
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

@@ -59,7 +59,9 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     audit: READ_ALL,
   },
   SALES_MANAGER: {
-    leads: { read: "all", write: "all", delete: "all" },
+    // Delete is Super Admin only, across every module — removing a record is
+    // the one action no sales role gets, however senior.
+    leads: { read: "all", write: "all", delete: "none" },
     pipeline: { read: "all", write: "all", delete: "none" },
     calls: { read: "all", write: "all", delete: "none" },
     ai_calls: { read: "all", write: "all", delete: "none" },

@@ -15,7 +15,7 @@ export default async function EditLeadPage({
   const scope = can(user.role, "leads", "write");
 
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!lead) notFound();
 

@@ -30,7 +30,7 @@ export async function initiateCall(
   if ("leadId" in target) {
     const leadScope = can(user.role, "leads", "read");
     const lead = await prisma.lead.findFirst({
-      where: { id: target.leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+      where: { id: target.leadId, deletedAt: null, ...scopeWhere(leadScope, user, "assignedToId") },
       select: { id: true },
     });
     if (!lead) return { error: "Lead not found or access denied." };
@@ -50,7 +50,7 @@ export async function initiateCall(
 
   const customerScope = can(user.role, "customers", "read");
   const customer = await prisma.customer.findFirst({
-    where: { id: target.customerId, ...scopeWhere(customerScope, user, "assignedToId") },
+    where: { id: target.customerId, deletedAt: null, ...scopeWhere(customerScope, user, "assignedToId") },
     select: { id: true },
   });
   if (!customer) return { error: "Customer not found or access denied." };

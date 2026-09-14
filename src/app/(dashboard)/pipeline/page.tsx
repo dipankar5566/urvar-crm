@@ -14,6 +14,7 @@ export default async function PipelinePage() {
     where: {
       ...scopeWhere(scope, user, "assignedToId"),
       pipeline: { isNot: null },
+      deletedAt: null,
     },
     include: {
       pipeline: true,

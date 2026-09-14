@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import { CheckInDialog, type VisitTarget } from "./check-in-dialog";
 import { CheckOutButton } from "./check-out-button";
 
@@ -24,7 +25,11 @@ function formatDuration(from: Date, to: Date): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-export default async function FieldVisitsPage() {
+export default async function FieldVisitsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await requireUser();
   const scope = can(user.role, "field_visits", "read");
 
@@ -44,7 +49,12 @@ export default async function FieldVisitsPage() {
   const leadScope = can(user.role, "leads", "read");
   const customerScope = can(user.role, "customers", "read");
 
-  const [openVisit, visits, leads, customers] = await Promise.all([
+  const PAGE_SIZE = 100;
+  const params = await searchParams;
+  const page = Math.max(1, Number(params.page) || 1);
+  const visitsWhere = { AND: [scopeWhere(scope, user, "userId"), { checkOutAt: { not: null } }] };
+
+  const [openVisit, visits, visitsTotalCount, leads, customers] = await Promise.all([
     // The rep's own open visit, regardless of how wide their read scope is:
     // a manager viewing everyone's visits still only checks out of their own.
     prisma.fieldVisit.findFirst({
@@ -58,7 +68,7 @@ export default async function FieldVisitsPage() {
       // AND rather than a spread: scopeWhere writes `userId` for an "own"
       // scope, and a sibling key of the same name would silently replace the
       // restriction instead of narrowing it (see CLAUDE.md).
-      where: { AND: [scopeWhere(scope, user, "userId"), { checkOutAt: { not: null } }] },
+      where: visitsWhere,
       include: {
         lead: { select: { id: true, name: true } },
         customer: { select: { id: true, name: true } },
@@ -66,12 +76,14 @@ export default async function FieldVisitsPage() {
         files: { select: { id: true } },
       },
       orderBy: { checkInAt: "desc" },
-      take: 100,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
+    prisma.fieldVisit.count({ where: visitsWhere }),
     leadScope === "none"
       ? []
       : prisma.lead.findMany({
-          where: scopeWhere(leadScope, user, "assignedToId"),
+          where: { ...scopeWhere(leadScope, user, "assignedToId"), deletedAt: null },
           select: { id: true, name: true, leadNumber: true, district: true, state: true },
           orderBy: { createdAt: "desc" },
           take: 200,
@@ -79,12 +91,13 @@ export default async function FieldVisitsPage() {
     customerScope === "none"
       ? []
       : prisma.customer.findMany({
-          where: scopeWhere(customerScope, user, "assignedToId"),
+          where: { ...scopeWhere(customerScope, user, "assignedToId"), deletedAt: null },
           select: { id: true, name: true, customerNumber: true, district: true, state: true },
           orderBy: { createdAt: "desc" },
           take: 200,
         }),
   ]);
+  const visitsTotalPages = Math.max(1, Math.ceil(visitsTotalCount / PAGE_SIZE));
 
   const targets: VisitTarget[] = [
     ...customers.map((c) => ({
@@ -204,6 +217,8 @@ export default async function FieldVisitsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={visitsTotalPages} />
     </div>
   );
 }

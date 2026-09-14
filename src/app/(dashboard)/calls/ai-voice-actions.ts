@@ -19,7 +19,7 @@ export async function initiateAiCall(leadId: string): Promise<ActionResult> {
 
   const leadScope = can(user.role, "leads", "read");
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, ...scopeWhere(leadScope, user, "assignedToId") },
+    where: { id: leadId, deletedAt: null, ...scopeWhere(leadScope, user, "assignedToId") },
     select: { id: true, phone: true, doNotCall: true },
   });
   if (!lead) return { error: "Lead not found or access denied." };

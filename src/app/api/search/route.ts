@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
           where: {
             ...scopeWhere(leadScope, user, "assignedToId"),
             OR: [{ name: contains }, { phone: contains }, { leadNumber: contains }],
+            deletedAt: null,
           },
           select: { id: true, name: true, leadNumber: true, phone: true },
           take: TAKE,
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
           where: {
             ...scopeWhere(customerScope, user, "assignedToId"),
             OR: [{ name: contains }, { phone: contains }, { customerNumber: contains }],
+            deletedAt: null,
           },
           select: { id: true, name: true, customerNumber: true, phone: true },
           take: TAKE,

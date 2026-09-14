@@ -15,7 +15,7 @@ export default async function EditCustomerPage({
   const scope = can(user.role, "customers", "write");
 
   const customer = await prisma.customer.findFirst({
-    where: { id: customerId, ...scopeWhere(scope, user, "assignedToId") },
+    where: { id: customerId, deletedAt: null, ...scopeWhere(scope, user, "assignedToId") },
   });
   if (!customer) notFound();
 

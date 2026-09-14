@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { PaginationControls } from "@/components/ui/pagination-controls";
 import {
   Table,
   TableBody,
@@ -26,7 +27,11 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   EXPIRED: "outline",
 };
 
-export default async function QuotationsPage() {
+export default async function QuotationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const user = await requireUser();
   const scope = can(user.role, "quotations", "read");
   const canWrite = can(user.role, "quotations", "write") !== "none";
@@ -41,22 +46,35 @@ export default async function QuotationsPage() {
     };
   }
 
-  const quotations = await prisma.quotation.findMany({
-    where,
-    include: {
-      customer: { select: { name: true } },
-      lead: { select: { name: true } },
-      createdBy: { select: { name: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+  const PAGE_SIZE = 200;
+  const params = await searchParams;
+  const page = Math.max(1, Number(params.page) || 1);
+
+  const [quotations, totalCount] = await Promise.all([
+    prisma.quotation.findMany({
+      where,
+      include: {
+        customer: { select: { name: true } },
+        lead: { select: { name: true } },
+        createdBy: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+    }),
+    prisma.quotation.count({ where }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Quotations"
-        subtitle={`${quotations.length} quotation${quotations.length === 1 ? "" : "s"} in your view.`}
+        subtitle={
+          totalPages > 1
+            ? `${totalCount} quotations in your view — showing page ${page} of ${totalPages}.`
+            : `${quotations.length} quotation${quotations.length === 1 ? "" : "s"} in your view.`
+        }
         action={
           canWrite && (
             <Button render={<Link href="/quotations/new" />}>
@@ -113,6 +131,8 @@ export default async function QuotationsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <PaginationControls page={page} totalPages={totalPages} />
     </div>
   );
 }

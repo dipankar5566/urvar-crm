@@ -63,6 +63,7 @@ export function ImportWizard() {
   const [headers, setHeaders] = useState<string[]>([]);
   const [rawRows, setRawRows] = useState<Record<string, string>[]>([]);
   const [fileName, setFileName] = useState("");
+  const [isUploadingKml, setIsUploadingKml] = useState(false);
 
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
   const [valueMapping, setValueMapping] = useState<ValueMapping>({
@@ -150,6 +151,50 @@ export function ImportWizard() {
       toast.error("Upload failed. Please try again.");
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  /**
+   * KML path. Placemarks have no header row, so — like the document path —
+   * extraction returns values already keyed by CRM field name and there is
+   * no column-mapping step. Unlike the document path this can carry many
+   * rows at once, so it lands on "columns" (pre-filled, just a glance) so
+   * the same duplicate/validation preview a spreadsheet gets still applies.
+   */
+  async function handleKml(file: File) {
+    setIsUploadingKml(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/leads/import/parse-kml", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Could not read this file.");
+        return;
+      }
+      if (!data.rows || data.rows.length === 0) {
+        toast.error(
+          data.skippedCount > 0
+            ? `No usable pins in this file — all ${data.skippedCount} had no phone number on file.`
+            : "No placemarks found in this file.",
+        );
+        return;
+      }
+
+      setHeaders(data.headers);
+      setRawRows(data.rows);
+      setFileName(file.name);
+      setColumnMapping(DOCUMENT_COLUMN_MAPPING);
+      setStep("columns");
+      if (data.skippedCount > 0) {
+        toast.info(
+          `${data.rows.length} pins usable — ${data.skippedCount} skipped (no phone number on file).`,
+        );
+      }
+    } catch {
+      toast.error("Upload failed. Please try again.");
+    } finally {
+      setIsUploadingKml(false);
     }
   }
 
@@ -296,6 +341,27 @@ export function ImportWizard() {
                   e.target.value = "";
                 }}
               />
+            </div>
+
+            <div className="border-t pt-4 space-y-3">
+              <div>
+                <p className="text-sm font-medium">Or import dealer pins from a KML map file</p>
+                <p className="text-sm text-muted-foreground">
+                  A .kml file of mapped dealer/distributor locations. Pins with no phone number on
+                  file will be skipped — you&apos;ll see how many before anything is created.
+                </p>
+              </div>
+              <Input
+                type="file"
+                accept=".kml"
+                disabled={isUploadingKml}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleKml(file);
+                  e.target.value = "";
+                }}
+              />
+              {isUploadingKml && <p className="text-sm text-muted-foreground">Reading file…</p>}
             </div>
           </div>
         )}
