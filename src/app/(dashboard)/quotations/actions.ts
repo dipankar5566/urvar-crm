@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { requireUser } from "@/lib/session";
 import { assertCan, can, scopeWhere } from "@/lib/permissions";
 import {
@@ -14,6 +15,7 @@ import { generateOrderNumber, generateQuotationNumber } from "@/lib/id-sequences
 import { notifyUser } from "@/lib/notifications";
 import { notifyQuotationSent } from "@/lib/quotation-notify";
 import { logAudit } from "@/lib/audit";
+import { PIPELINE_STAGE_ORDER, STAGE_TO_STATUS } from "@/lib/constants/labels";
 
 type ActionResult = { error: string } | { success: true; id?: string };
 
@@ -270,7 +272,7 @@ export async function updateQuotationStatus(
 
   const existing = await prisma.quotation.findFirst({
     where: { id: quotationId, ...scopeWhere(scope, user, "createdById") },
-    include: { items: true, customer: true },
+    include: { items: true, customer: true, lead: { include: { pipeline: true } } },
   });
   if (!existing) return { error: "Quotation not found or access denied." };
 
@@ -318,7 +320,46 @@ export async function updateQuotationStatus(
     const data: { status: typeof status; sentAt?: Date; respondedAt?: Date } = { status };
     if (status === "SENT") data.sentAt = new Date();
     if (status === "REJECTED") data.respondedAt = new Date();
-    await prisma.quotation.update({ where: { id: quotationId }, data });
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      prisma.quotation.update({ where: { id: quotationId }, data }),
+    ];
+
+    // Phase 1B: keep the Kanban board in sync with what actually happened on
+    // the quotation, instead of leaving the card wherever a rep last dragged
+    // it. Only ever advances forward, and only if the lead hasn't already
+    // moved past this point (a rep may have dragged the card ahead of the
+    // quotation, e.g. straight to NEGOTIATION) — see CLAUDE.md/all.md for why
+    // the ACCEPTED-side sync isn't built yet (ORDER_RECEIVED/WON ordering).
+    const pipeline = existing.lead?.pipeline;
+    if (status === "SENT" && existing.leadId && pipeline) {
+      const currentIdx = PIPELINE_STAGE_ORDER.indexOf(
+        pipeline.stage as (typeof PIPELINE_STAGE_ORDER)[number],
+      );
+      const targetIdx = PIPELINE_STAGE_ORDER.indexOf("QUOTATION_SENT");
+      if (currentIdx >= 0 && currentIdx < targetIdx) {
+        ops.push(
+          prisma.pipeline.update({
+            where: { leadId: existing.leadId },
+            data: { stage: "QUOTATION_SENT", enteredStageAt: new Date() },
+          }),
+          prisma.pipelineStageHistory.create({
+            data: {
+              pipelineId: pipeline.id,
+              fromStage: pipeline.stage,
+              toStage: "QUOTATION_SENT",
+              movedById: user.id,
+            },
+          }),
+          prisma.lead.update({
+            where: { id: existing.leadId },
+            data: { status: STAGE_TO_STATUS["QUOTATION_SENT"] as never },
+          }),
+        );
+      }
+    }
+
+    await prisma.$transaction(ops);
   }
 
   await logAudit({

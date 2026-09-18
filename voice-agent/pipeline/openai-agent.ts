@@ -9,6 +9,7 @@ import type { ChatCompletionChunk, ChatCompletionMessageParam } from "openai/res
 import { CRM_TOOLS, executeCrmTool, type ToolContext } from "../tools/crm-tools.js";
 import { completionBody, getProvider, type LlmProvider } from "./llm-provider.js";
 import { CUSTOMER_TYPE_LABELS } from "../../src/lib/constants/labels.js";
+import { EMPTY_GRAPH_FACTS, type GraphFactsBrief } from "../lib/graph-facts.js";
 
 const MAX_TOOL_HOPS = 4;
 
@@ -112,13 +113,69 @@ ${lines}
 `;
 }
 
+/**
+ * Formats knowledge-graph facts (crop agronomy, district context, similar
+ * farmers) into a labeled prompt block, mirroring historyFacts' "empty
+ * string when there's nothing to say" convention — an unmatched
+ * district/crop, or the flag being off, adds nothing to the prompt.
+ *
+ * The graph mixes Urvar-curated (high confidence) and third-party
+ * "ChatGPT-assisted" (lower confidence) facts as-is (see all.md Risks), so
+ * the model is told explicitly not to state this more confidently than the
+ * catalogue above, and never to volunteer it unprompted.
+ */
+function graphFacts(facts: GraphFactsBrief): string {
+  const lines: string[] = [];
+
+  if (facts.suitableProducts.length > 0) {
+    lines.push(
+      "Products suited to this crop: " +
+        facts.suitableProducts
+          .map((p) => (p.stage ? `${p.product} (${p.stage} stage)` : p.product))
+          .join(", "),
+    );
+  }
+  if (facts.cropDeficiencies.length > 0) {
+    lines.push(
+      "This crop is commonly susceptible to: " +
+        facts.cropDeficiencies
+          .map((d) => `${d.deficiency}${d.treatedBy.length ? ` (treated by ${d.treatedBy.join(", ")})` : ""}`)
+          .join("; "),
+    );
+  }
+  if (facts.district) {
+    const d = facts.district;
+    const bits = [
+      d.soilTypes.length ? `soil type ${d.soilTypes.join("/")}` : null,
+      d.deficiencies.length ? `known deficiencies ${d.deficiencies.map((x) => x.name).join(", ")}` : null,
+      d.zone ? `agro-climatic zone ${d.zone}` : null,
+    ].filter(Boolean);
+    if (bits.length) lines.push(`${d.name} district context: ${bits.join("; ")}.`);
+  }
+  if (facts.personas.length > 0) {
+    const prefs = facts.personas.map((p) => p.preferredProducts.join(", ")).filter(Boolean);
+    if (prefs.length) lines.push("Similar farmers in this crop/area typically prefer: " + prefs.join("; "));
+  }
+
+  if (lines.length === 0) return "";
+  return `
+Background knowledge (use only if it naturally fits the conversation — never volunteer it unprompted, and never state it with more confidence than the catalogue facts above):
+${lines.map((l) => `- ${l}`).join("\n")}
+`;
+}
+
 export function buildSystemPrompt(
   lead: LeadBrief,
   language: string,
-  context: { products?: ProductBrief[]; priorCalls?: PriorCallBrief[] } = {},
+  context: {
+    products?: ProductBrief[];
+    priorCalls?: PriorCallBrief[];
+    graphFacts?: GraphFactsBrief;
+  } = {},
 ): string {
   const products = context.products ?? [];
   const priorCalls = context.priorCalls ?? [];
+  const graph = context.graphFacts ?? EMPTY_GRAPH_FACTS;
 
   return `You are a sales executive at Urvar Natural, an organic-fertilizer company in India, calling a lead. This is a real, live phone call — the person can hear you speak. You are not a bot reading a script; you are a knowledgeable person having a short, useful conversation.
 
@@ -127,7 +184,7 @@ ${leadFacts(lead)}
 ${historyFacts(priorCalls)}
 Products you may discuss (this is the whole catalogue — nothing else exists):
 ${catalogueFacts(products)}
-
+${graphFacts(graph)}
 HOW YOU SPEAK — this matters more than anything else below:
 - Be brief. A question of yours should be 5-15 words, and open each turn with a short sentence.
 - Ask exactly ONE question per turn. Never stack two questions together.

@@ -68,6 +68,8 @@ import {
   type ProductBrief,
   type PriorCallBrief,
 } from "./pipeline/openai-agent.js";
+import { isKnowledgeGraphEnabled } from "./lib/neo4j.js";
+import { resolveGraphFacts, EMPTY_GRAPH_FACTS, type GraphFactsBrief } from "./lib/graph-facts.js";
 import { recordCallOutcome } from "./tools/crm-tools.js";
 
 const SUGGESTION_MIN_INTERVAL_MS = 8000;
@@ -162,6 +164,11 @@ type CallSession = {
   /** What happened on the last few calls to this lead, so the agent stops
    * re-asking things they already answered. */
   priorCalls: PriorCallBrief[];
+  /** Knowledge-graph facts for this lead's district/crop, resolved once at
+   * connect (see the preload block in handlePlivoStream) — empty unless
+   * KNOWLEDGE_GRAPH_ENABLED is on and a district/crop actually matched a
+   * graph node. See voice-agent/lib/graph-facts.ts. */
+  graphFacts: GraphFactsBrief;
   providerCallSid: string | null;
   transcriptSegments: string[];
   assistSocket: WebSocket | null;
@@ -270,6 +277,7 @@ function createSession(
   lead?: LeadRow | null,
   products: ProductBrief[] = [],
   priorCalls: PriorCallBrief[] = [],
+  graphFacts: GraphFactsBrief = EMPTY_GRAPH_FACTS,
 ): CallSession {
   return {
     mode,
@@ -288,6 +296,7 @@ function createSession(
     },
     products,
     priorCalls,
+    graphFacts,
     providerCallSid: null,
     transcriptSegments: [],
     assistSocket: null,
@@ -911,12 +920,36 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
     }
   }
 
+  // Knowledge-graph facts, resolved once here for the same reason the
+  // catalogue above is: a live Cypher lookup mid-call would repeat the exact
+  // latency mistake the catalogue preload was built to avoid (all.md
+  // Guiding Principle 5). Off by default (KNOWLEDGE_GRAPH_ENABLED); an
+  // unreachable/misconfigured Neo4j must never affect call setup — its own
+  // try/catch, separate from the catalogue's, so one failing doesn't blank
+  // out the other.
+  let graphFacts: GraphFactsBrief = EMPTY_GRAPH_FACTS;
+  if (call.callMode === "AI_AUTONOMOUS" && call.leadId && isKnowledgeGraphEnabled()) {
+    try {
+      graphFacts = await resolveGraphFacts({
+        district: call.lead?.district ?? null,
+        cropInterest: call.lead?.cropInterest ?? null,
+      });
+      console.log(
+        `[call ${callId}] graph facts resolved: ${graphFacts.suitableProducts.length} product(s), ` +
+          `district=${graphFacts.district ? "matched" : "no match"}, ${graphFacts.personas.length} persona(s)`,
+      );
+    } catch (err) {
+      console.error(`[call ${callId}] graph facts preload failed — continuing without`, err);
+    }
+  }
+
   const session = createSession(
     call.callMode as CallSession["mode"],
     call.leadId,
     call.lead,
     products,
     priorCalls,
+    graphFacts,
   );
   session.providerCallSid = call.providerCallSid;
   session.plivoWs = ws;
@@ -1289,7 +1322,7 @@ async function runNextAgentTurn(
         content: buildSystemPrompt(
           { name: session.leadName ?? "the lead", ...session.leadBrief },
           languageName(session.languageCode),
-          { products: session.products, priorCalls: session.priorCalls },
+          { products: session.products, priorCalls: session.priorCalls, graphFacts: session.graphFacts },
         ),
       });
     }

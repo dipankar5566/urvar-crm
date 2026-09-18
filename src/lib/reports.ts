@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere, type Scope } from "@/lib/permissions";
 import type { requireUser } from "@/lib/session";
+import { classifyQuotationSafeZone } from "@/lib/safe-zone";
 
 export type ReportFilters = {
   from: Date;
@@ -158,6 +159,78 @@ export async function getQuotationsReport(user: ReportUser, filters: ReportFilte
       totalQuantity: Number(p._sum.quantity ?? 0),
     })),
     quotations,
+  };
+}
+
+/**
+ * Phase 4 of all.md: flags which quotations, among those already created,
+ * would qualify for the "safe zone" (standard pricing, known-good customer,
+ * under a value cap) — a read-only sanity check for the business before any
+ * later phase lets the system act on this classification autonomously.
+ * Scoped to quotations that actually have a converted customer, since the
+ * safe-zone rule depends on customer standing (dealerTier/creditLimit) that
+ * a lead-only quotation doesn't carry yet.
+ */
+export async function getSafeZoneReport(user: ReportUser, filters: ReportFilters) {
+  const reportScope = can(user.role, "reports", "read");
+  const where: Record<string, unknown> = {
+    ...quotationScopeWhere(reportScope, user),
+    createdAt: { gte: filters.from, lte: filters.to },
+    customerId: { not: null },
+  };
+
+  const quotations = await prisma.quotation.findMany({
+    where,
+    select: {
+      id: true,
+      quotationNumber: true,
+      discountPercent: true,
+      discountAmount: true,
+      totalAmount: true,
+      createdAt: true,
+      customer: {
+        select: {
+          name: true,
+          customerType: true,
+          dealerTier: true,
+          creditLimit: true,
+          outstandingAmount: true,
+        },
+      },
+      items: { select: { productId: true, unitPrice: true, discountPercent: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+  });
+
+  const productIds = [...new Set(quotations.flatMap((q) => q.items.map((i) => i.productId)))];
+  const products = productIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, mrp: true, dealerPrice: true, distributorPrice: true },
+      })
+    : [];
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  const classified = quotations
+    .filter((q): q is typeof q & { customer: NonNullable<typeof q.customer> } => q.customer != null)
+    .map((q) => {
+      const result = classifyQuotationSafeZone(q, q.customer, productMap);
+      return {
+        id: q.id,
+        quotationNumber: q.quotationNumber,
+        customerName: q.customer.name,
+        totalAmount: q.totalAmount,
+        createdAt: q.createdAt,
+        eligible: result.eligible,
+        reasons: result.reasons,
+      };
+    });
+
+  return {
+    eligibleCount: classified.filter((c) => c.eligible).length,
+    totalScanned: classified.length,
+    quotations: classified,
   };
 }
 

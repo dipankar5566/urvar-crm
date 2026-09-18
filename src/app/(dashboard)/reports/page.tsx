@@ -7,6 +7,7 @@ import {
   getOrdersReport,
   getQuotationsReport,
   getRepLeaderboard,
+  getSafeZoneReport,
 } from "@/lib/reports";
 import {
   Card,
@@ -36,7 +37,7 @@ export default async function ReportsPage({
   const filters = parseReportFilters(params);
   const showRepFilter = scope === "all" || scope === "territory";
 
-  const [leadsReport, ordersReport, quotationsReport, leaderboard, reps] =
+  const [leadsReport, ordersReport, quotationsReport, leaderboard, reps, safeZoneReport] =
     await Promise.all([
       getLeadsReport(user, filters),
       getOrdersReport(user, filters),
@@ -49,6 +50,7 @@ export default async function ReportsPage({
             orderBy: { name: "asc" },
           })
         : Promise.resolve([]),
+      getSafeZoneReport(user, filters),
     ]);
 
   const totalLeadValue = leadsReport.leads.reduce(
@@ -238,6 +240,48 @@ export default async function ReportsPage({
               <Badge variant="secondary">{row._count._all}</Badge>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Safe-Zone Classifier (Phase 4 — read-only)</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Which of this range&apos;s quotations would qualify for standard, no-discount,
+            known-customer auto-processing later — nothing here acts on this today.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-sm">
+            <span className="font-medium">{safeZoneReport.eligibleCount}</span> of{" "}
+            {safeZoneReport.totalScanned} quotations in range would qualify.
+          </p>
+          {safeZoneReport.quotations.length === 0 && (
+            <p className="text-sm text-muted-foreground">No customer-linked quotations in range.</p>
+          )}
+          {safeZoneReport.quotations.slice(0, 20).map((q) => (
+            <div key={q.id} className="flex items-start justify-between gap-4 border-t py-2 text-sm first:border-t-0">
+              <div className="min-w-0">
+                <p className="truncate font-medium">
+                  {q.quotationNumber} — {q.customerName}
+                </p>
+                {!q.eligible && (
+                  <p className="truncate text-xs text-muted-foreground">{q.reasons.join(" ")}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-muted-foreground">{inr(Number(q.totalAmount))}</span>
+                <Badge variant={q.eligible ? "default" : "secondary"}>
+                  {q.eligible ? "Eligible" : "Not eligible"}
+                </Badge>
+              </div>
+            </div>
+          ))}
+          {safeZoneReport.quotations.length > 20 && (
+            <p className="text-xs text-muted-foreground">
+              Showing 20 of {safeZoneReport.quotations.length} — narrow the date range for the full list.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
