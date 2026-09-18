@@ -53,3 +53,8 @@ next-env.d.ts
 
 # local file storage (uploaded attachments / generated PDFs)
 /storage
+
+# KML source files for the Leads import wizard's dealer-pin path. Real
+# prospect data — named businesses, phone numbers, addresses, GPS, sales
+# tiers and estimated tonnage — so it stays on disk, out of git history.
+/kml
