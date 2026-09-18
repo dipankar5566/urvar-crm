@@ -55,7 +55,13 @@ prisma/
   schema.prisma          # full normalized schema (24 models)
   seed.ts                # demo data (users, products, leads, customers, quotations…)
 prisma.config.ts         # Prisma 7 config (datasource url lives here, not in schema)
-instrumentation.ts       # starts the due-reminder cron on server boot
+instrumentation.ts       # starts the due-reminder + AI backlog crons on server boot
+scripts/                 # backup-db.ps1 / restore-db.ps1 / register-backup-task.ps1
+voice-agent/             # standalone AI voice agent process (own PM2 app)
+  server.ts              # Plivo <Stream> + live-assist WebSocket host
+  pipeline/              # STT, TTS, LLM provider, prompt building
+  lib/                   # Neo4j knowledge-graph client + fact resolution
+  tools/                 # CRM tools exposed to the model
 src/
   app/
     (auth)/login/        # login page + form
@@ -65,6 +71,7 @@ src/
       customers/ products/ quotations/ purchases/ reports/
       users/ audit-logs/ # Super Admin only
     api/auth/[...all]/   # Better Auth handler
+    api/quotations/accept/[token]/  # public customer accept-link (no session)
   components/
     ui/                  # shadcn/ui components
     layout/              # sidebar, topbar
@@ -74,8 +81,12 @@ src/
     session.ts           # getCurrentUser / requireUser / requireRole
     prisma.ts            # Prisma client singleton (pg adapter)
     permissions.ts       # RBAC matrix + can() + scopeWhere()
+    safe-zone.ts         # "safe zone" deal classifier (standard price, known customer)
+    ai-call-dialer.ts    # shared AI outbound dialer (dashboard action + cron)
+    ai-backlog-cron.ts   # outbound sweep over never-contacted leads (off by default)
+    reminder-cron.ts     # due reminders, quotation chases, stale-lead escalation
     constants/           # territories, enum labels, nav config
-  middleware.ts          # coarse auth gating
+  middleware.ts          # coarse auth gating (everything except /api/**)
 ```
 
 ## RBAC
@@ -105,11 +116,38 @@ A quotation marked Sent emails the customer a PDF copy (SMTP via Zoho Mail)
 and is logged either way in `MessageLog`; WhatsApp delivery for the same
 event is implemented but ships switched off pending a Meta-approved
 template. Follow-ups and tasks that pass their due date get an in-app +
-email reminder from an in-process cron.
+email reminder from an in-process cron, which also chases quotations that
+were sent but never answered and escalates leads nobody has called.
 
 Deployed to production at `crm.urvarindia.com` via PM2 + Cloudflare Tunnel
 on the same Windows box used for local dev — not the Docker/AWS path
-originally planned.
+originally planned. The `urvar_crm` database is backed up nightly at 02:00
+by a Windows Scheduled Task (`scripts/backup-db.ps1`, 14-day retention);
+`scripts/restore-db.ps1` restores into a disposable database by default so
+a mistyped run cannot overwrite production.
+
+### Sales-funnel automation
+
+A phased effort to stop the funnel depending on a rep remembering to act.
+Shipped so far: the reminder/escalation sweeps above; automatic pipeline
+stage sync when a quotation is sent; a read-only "safe zone" classifier
+(`src/lib/safe-zone.ts`) that flags deals which are standard-priced to a
+known customer in good standing; and a Neo4j knowledge graph (separate
+`urvar-knowledge-graph` repo) that resolves a lead's district and crops
+into agronomy facts injected into the voice agent's prompt at call setup.
+
+Three further capabilities are **built and deployed but switched off**,
+each behind its own env flag — flipping one is a `.env` edit plus a
+`pm2 restart`, no rebuild:
+
+| Flag | What it enables |
+| --- | --- |
+| `AI_AUTO_QUOTE_ENABLED` | Voice agent can create and send a quotation itself, but only for a safe-zone deal |
+| `QUOTATION_ACCEPT_LINK_ENABLED` | Emailed quotations carry a link letting the customer accept, creating the Order with no rep |
+| `AI_OUTBOUND_BACKLOG_ENABLED` | Scheduled AI calls into the backlog of leads nobody has contacted |
+
+`AI_OUTBOUND_BACKLOG_ENABLED` additionally needs legal sign-off on TRAI DND
+exposure before it is turned on — see the warning in `ai-backlog-cron.ts`.
 
 Remaining from the original Phase 2 scope: activating the WhatsApp template
 (pending Meta approval) and a dedicated mobile field app — field visits
