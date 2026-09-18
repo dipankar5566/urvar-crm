@@ -340,6 +340,16 @@ export function takeSentences(buf: string): { sentences: string[]; rest: string 
  * hold short pieces and let them ride along with the next one. */
 const MIN_SPEAK_CHARS = 24;
 
+/**
+ * Whether this sentence is a question, and so must be spoken on its own.
+ *
+ * Bengali and Devanagari both use "?" for questions — the danda "।" ends a
+ * statement — so the one mark covers every language this agent speaks.
+ */
+function isQuestion(sentence: string): boolean {
+  return /\?\s*$/.test(sentence);
+}
+
 type StreamedTurn = {
   content: string;
   toolCalls: { id: string; name: string; arguments: string }[];
@@ -391,6 +401,26 @@ async function consumeStream(
         unspoken = rest;
         for (const sentence of sentences) {
           if (isCancelled()) break;
+          // A question has to reach TTS as its own utterance. Sarvam gives an
+          // utterance a single contour, so a question with a statement glued
+          // in front of it is read with statement intonation and simply does
+          // not sound like a question. Measured on rendered samples: the same
+          // clause rises +3.2 to +5.6 semitones alone and falls -3.9 to -5.1
+          // behind a lead-in, and the wording made no difference — swapping
+          // the two questions swapped the result with them. 94 of the 243
+          // questions in the call logs were arriving glued, which is exactly
+          // the "sometimes it doesn't sound like a question" heard on calls.
+          //
+          // The cost is that `held` can now be voiced alone below
+          // MIN_SPEAK_CHARS. That is the lesser evil: a short acknowledgement
+          // on its own is what fillerWord() already says every turn, whereas
+          // a flattened question misleads the person on the phone.
+          if (isQuestion(sentence)) {
+            if (held) onSentence(held);
+            held = "";
+            onSentence(sentence);
+            continue;
+          }
           // Merge short pieces so each spoken utterance is a natural unit.
           held = held ? `${held} ${sentence}` : sentence;
           if (held.length >= MIN_SPEAK_CHARS) {
