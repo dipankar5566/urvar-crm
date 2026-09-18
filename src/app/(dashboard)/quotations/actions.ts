@@ -12,6 +12,7 @@ import {
   type QuotationStatusInput,
 } from "@/lib/validations/quotation";
 import { generateOrderNumber, generateQuotationNumber } from "@/lib/id-sequences";
+import { generateAcceptToken } from "@/lib/tokens";
 import { notifyUser } from "@/lib/notifications";
 import { notifyQuotationSent } from "@/lib/quotation-notify";
 import { logAudit } from "@/lib/audit";
@@ -317,8 +318,13 @@ export async function updateQuotationStatus(
       }
     }
   } else {
-    const data: { status: typeof status; sentAt?: Date; respondedAt?: Date } = { status };
-    if (status === "SENT") data.sentAt = new Date();
+    const data: { status: typeof status; sentAt?: Date; respondedAt?: Date; acceptToken?: string } = { status };
+    if (status === "SENT") {
+      data.sentAt = new Date();
+      // Idempotent: only mint once, so re-sending an already-SENT quotation
+      // never invalidates a link a customer may already have opened.
+      if (!existing.acceptToken) data.acceptToken = generateAcceptToken();
+    }
     if (status === "REJECTED") data.respondedAt = new Date();
 
     const ops: Prisma.PrismaPromise<unknown>[] = [

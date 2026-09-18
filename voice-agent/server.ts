@@ -68,7 +68,7 @@ import {
   type ProductBrief,
   type PriorCallBrief,
 } from "./pipeline/openai-agent.js";
-import { isKnowledgeGraphEnabled } from "./lib/neo4j.js";
+import { isKnowledgeGraphEnabled, startKeepAlive } from "./lib/neo4j.js";
 import { resolveGraphFacts, EMPTY_GRAPH_FACTS, type GraphFactsBrief } from "./lib/graph-facts.js";
 import { recordCallOutcome } from "./tools/crm-tools.js";
 
@@ -1507,6 +1507,12 @@ function handleAssistConnection(ws: WebSocket, callId: string, url: URL) {
 
 httpServer.listen(PORT, () => {
   console.log(`voice-agent listening on :${PORT} (health, /plivo-stream, /assist/{callId})`);
+  // Warms the Neo4j connection now and keeps it warm on an interval, so a
+  // call's graph lookup never spends its own 1500ms budget on warm-up. A
+  // boot-only warm-up was tried first and proved insufficient: the latency
+  // returns with idleness, not just process age. No-op when
+  // KNOWLEDGE_GRAPH_ENABLED is off, and never throws.
+  startKeepAlive();
 });
 
 // This process holds every concurrent call's session state — one call's bug

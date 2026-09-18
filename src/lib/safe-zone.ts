@@ -57,7 +57,7 @@ export type SafeZoneClassification = {
 /** The price tier a customer is expected to pay, by type/tier — falls back
  * to MRP if the tier-specific price isn't set on the product (per
  * CLAUDE.md: dealerPrice/distributorPrice are both nullable). */
-function expectedUnitPrice(product: SafeZoneProduct, customer: SafeZoneCustomer): number {
+export function expectedUnitPrice(product: SafeZoneProduct, customer: SafeZoneCustomer): number {
   if (customer.customerType === "B2B_DISTRIBUTOR") {
     return num(product.distributorPrice) || num(product.mrp);
   }

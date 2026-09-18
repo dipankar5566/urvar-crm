@@ -671,6 +671,12 @@ model Quotation {
   notes             String?
   sentAt            DateTime?
   respondedAt       DateTime?
+  /// Phase 6 of the sales-funnel automation roadmap: an unguessable bearer
+  /// token minted when a quotation moves to SENT, letting the customer
+  /// accept it via an emailed link (src/app/api/quotations/accept/[token])
+  /// with no CRM session. Nullable because DRAFT quotations, and any
+  /// quotation sent before this shipped, have none.
+  acceptToken       String?         @unique
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

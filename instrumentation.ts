@@ -13,4 +13,7 @@ export async function register() {
 
   const { registerReminderCron } = await import("@/lib/reminder-cron");
   registerReminderCron();
+
+  const { registerAiBacklogCron } = await import("@/lib/ai-backlog-cron");
+  registerAiBacklogCron();
 }

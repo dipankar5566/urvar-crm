@@ -10,6 +10,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { PrismaClient } from "../../src/generated/prisma/client.js";
 import { ProductCategory } from "../../src/generated/prisma/enums.js";
 import { plivoClient, getOrCreateEndpoint } from "../../src/lib/plivo.js";
+import { AUTO_QUOTE_TOOL, executeCreateQuotation } from "./quotation-tool.js";
 
 export type ToolContext = {
   prisma: PrismaClient;
@@ -25,7 +26,7 @@ export type ToolResult = {
   controlSignal?: "end_call" | "transfer_to_human";
 };
 
-export const CRM_TOOLS: ChatCompletionTool[] = [
+const BASE_TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -143,6 +144,16 @@ export const CRM_TOOLS: ChatCompletionTool[] = [
   },
 ];
 
+// Phase 5 of the sales-funnel automation roadmap: the tool schema itself is
+// invisible to the model when AI_AUTO_QUOTE_ENABLED isn't "true", not just
+// rejected at execution time — one more layer than transfer_to_human's
+// execution-time-only kill switch, since this is a new, unproven capability
+// that writes a real customer-facing Quotation.
+export const CRM_TOOLS: ChatCompletionTool[] = [
+  ...BASE_TOOLS,
+  ...(process.env.AI_AUTO_QUOTE_ENABLED === "true" ? [AUTO_QUOTE_TOOL] : []),
+];
+
 /**
  * What people actually say, mapped to the English words the catalogue is
  * stored under. Translations only — nothing here asserts anything about a
@@ -171,7 +182,7 @@ const PRODUCT_SYNONYMS: Record<string, string[]> = {
   "खाद": ["fertilizer", "compost"],
 };
 
-function synonymTerms(query: string): string[] {
+export function synonymTerms(query: string): string[] {
   const lower = query.toLowerCase();
   const terms = new Set<string>();
   for (const [word, mapped] of Object.entries(PRODUCT_SYNONYMS)) {
@@ -344,6 +355,10 @@ export async function executeCrmTool(
       });
 
       return { output: { transferring: true }, controlSignal: "transfer_to_human" };
+    }
+
+    case "create_quotation": {
+      return executeCreateQuotation(argsJson, ctx);
     }
 
     case "end_call": {

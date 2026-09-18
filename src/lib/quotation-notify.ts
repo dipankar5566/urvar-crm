@@ -46,6 +46,15 @@ export async function notifyQuotationSent(
 
   const total = formatAmount(quotation.totalAmount.toString());
   const emailAddress = recipient.email?.trim();
+  // Phase 6 of the sales-funnel automation roadmap: dark by default
+  // (QUOTATION_ACCEPT_LINK_ENABLED unset/false) — an unauthenticated
+  // customer action that creates a real Order is the highest-consequence
+  // autonomous write path shipped so far, so it stays off until a human
+  // deliberately flips it, independent of whether this code merely deployed.
+  const acceptUrl =
+    process.env.QUOTATION_ACCEPT_LINK_ENABLED === "true" && quotation.acceptToken
+      ? `${process.env.NEXT_PUBLIC_APP_URL}/api/quotations/accept/${quotation.acceptToken}`
+      : null;
   // whatsapp is a separate opt-in column; fall back to the primary phone,
   // which for an Indian mobile is virtually always the same WhatsApp number.
   const whatsappNumber = recipient.whatsapp?.trim() || recipient.phone?.trim();
@@ -98,6 +107,7 @@ export async function notifyQuotationSent(
         quotation.validUntil
           ? `This quotation is valid until ${quotation.validUntil.toLocaleDateString("en-IN")}.`
           : ``,
+        acceptUrl ? `You can review and accept this quotation online: ${acceptUrl}` : ``,
         ``,
         `Our team will follow up shortly. Do reply to this email with any questions.`,
         ``,

@@ -54,6 +54,71 @@ function getDriver(): Driver | null {
   }
 }
 
+/** How often to ping the graph to keep it warm. Found live: a boot-time
+ * warm-up alone was NOT enough — the connection sat idle for a few minutes
+ * and the very next real lookup blew its 1500ms budget on both queries,
+ * silently costing that call its enrichment. The latency comes back with
+ * idleness, not just with process age, so it has to be kept warm, not warmed
+ * once. One tiny query a minute against a 157-node graph is free. */
+const KEEP_ALIVE_MS = 60_000;
+
+/** Touches the same labels the real lookups use rather than a bare
+ * `RETURN 1`: verifyConnectivity() on its own proved insufficient (the
+ * connection was live and the next query still timed out), so this keeps the
+ * store's page cache warm too, not only the bolt connection. */
+const KEEP_ALIVE_CYPHER = "MATCH (d:District) RETURN count(d) AS c";
+
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+/** Only log on health transitions — a 60s ping would otherwise write ~1440
+ * lines a day saying nothing changed, and bury the lines that matter. */
+let keepAliveHealthy: boolean | null = null;
+
+async function pingGraph(timeoutMs: number): Promise<boolean> {
+  const drv = getDriver();
+  if (!drv) return false;
+  const session = drv.session({ defaultAccessMode: neo4j.session.READ });
+  try {
+    await Promise.race([
+      session.run(KEEP_ALIVE_CYPHER),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("neo4j ping timeout")), timeoutMs),
+      ),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await session.close().catch(() => {});
+  }
+}
+
+/**
+ * Warms the graph connection at boot and keeps it warm on an interval, so a
+ * call's own lookup never pays connection/cache warm-up out of its 1500ms
+ * budget. Call once at process start.
+ *
+ * Never throws, and the interval is unref'd: a graph that is down must not
+ * stop the voice agent from starting, nor hold the process open on shutdown.
+ */
+export function startKeepAlive(): void {
+  if (!isKnowledgeGraphEnabled() || keepAliveTimer) return;
+
+  const tick = async (initial: boolean) => {
+    // The boot ping gets a generous budget (nothing is waiting on it);
+    // steady-state pings get a tight one, since a slow ping is itself the
+    // signal that the graph has gone cold or unreachable.
+    const ok = await pingGraph(initial ? 10_000 : 3_000);
+    if (ok !== keepAliveHealthy) {
+      console.log(ok ? "[neo4j] warm" : "[neo4j] ping failed — calls will degrade to no graph facts");
+      keepAliveHealthy = ok;
+    }
+  };
+
+  void tick(true);
+  keepAliveTimer = setInterval(() => void tick(false), KEEP_ALIVE_MS);
+  keepAliveTimer.unref?.();
+}
+
 /**
  * Runs one read query against one short-lived session. Always resolves —
  * never rejects — returning [] on any failure (disabled, unreachable, auth
@@ -110,6 +175,11 @@ export function setCached<T>(key: string, value: T): void {
  * anyway), but cheap insurance against leaking a connection pool across a
  * hot-reload in dev (`tsx watch`). */
 export async function closeDriver(): Promise<void> {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+    keepAliveHealthy = null;
+  }
   if (driver) {
     await driver.close().catch(() => {});
     driver = null;
