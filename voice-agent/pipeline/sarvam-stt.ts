@@ -30,6 +30,11 @@ export type SttTranscript = {
    * belonging to an utterance it already acted on from a fresh one. */
   utteranceIdx: number | null;
   language: string | null;
+  /** Sarvam's own confidence in `language` for this utterance. Was logged but
+   * discarded; it is the gate that keeps a mis-hear out of the voice-switch
+   * decision — the final that relanguaged a lead to Telugu ("Ice cream")
+   * carried 0.12. */
+  languageConfidence: number | null;
 };
 
 /** Sarvam runs server-side turn detection (`turn_detection: "vad"`,
@@ -114,6 +119,7 @@ export function createSarvamSttSession(opts: {
         isFinal: msg.event === "transcript.final",
         utteranceIdx: numOrNull(msg.utterance_idx),
         language: typeof msg.language === "string" ? msg.language : null,
+        languageConfidence: numOrNull(msg.language_confidence),
       });
     } else if (msg.event === "vad.speech_start" || msg.event === "vad.speech_end") {
       // Speech onset, hundreds of milliseconds before the final transcript.

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { LeadSource, CustomerType, LeadStatus } from "@/generated/prisma/enums";
+import { PREFERRED_LANGUAGE_LABELS } from "@/lib/constants/labels";
 
 const optionalText = z
   .string()
@@ -42,6 +43,16 @@ export const leadFormSchema = z.object({
   isGovernmentTender: z.boolean().optional().default(false),
   remarks: optionalText,
   assignedToId: optionalText,
+  // Which language an AI call opens in. "" (the form's default choice) means
+  // "decide from the lead's state" and must reach Prisma as null, not an
+  // empty string — resolveTtsLanguage treats any non-empty value as an
+  // explicit override. Constrained to the codes Sarvam's TTS can speak, so a
+  // typo can't reach the TTS config and be rejected mid-call.
+  preferredLanguage: z
+    .enum(Object.keys(PREFERRED_LANGUAGE_LABELS) as [string, ...string[]])
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
 });
 
 export type LeadFormInput = z.input<typeof leadFormSchema>;

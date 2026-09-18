@@ -33,11 +33,12 @@ import {
 } from "./pipeline/sarvam-stt.js";
 import { createSarvamTtsSession, type SarvamTtsSession } from "./pipeline/sarvam-tts.js";
 import {
-  resolveTtsLanguage,
+  resolveTtsLanguageWithSource,
   languageName,
   fillerWord,
   closingLine,
   type SarvamTtsLanguage,
+  type TtsLanguageSource,
 } from "./pipeline/tts-language.js";
 import { isBackchannel, classifyInterrupt } from "./pipeline/backchannel.js";
 import { toSpeakableText } from "./pipeline/voice-output.js";
@@ -125,6 +126,16 @@ const TWO_STAGE_BARGE_IN = (process.env.VOICE_AGENT_BARGE_IN ?? "two-stage") !==
  * clears the 300ms VAD gap without being long enough to read as a stall. */
 const FRAGMENT_COALESCE_MS = Number(process.env.VOICE_AGENT_COALESCE_MS) || 600;
 
+/** Agreeing /text-lid detections needed before the voice switches language.
+ * One was enough under the old code, and one is exactly what the mis-heard
+ * "Ice cream" (STT confidence 0.12) needed to relanguage a Bengali farmer to
+ * Telugu for every subsequent call. */
+const LANGUAGE_SWITCH_VOTES = 2;
+/** How often a pending voice switch re-checks whether the agent has stopped
+ * talking. The switch rebuilds the TTS socket and drops audio in flight, so
+ * it has to land in a gap. */
+const LANGUAGE_SWITCH_RETRY_MS = 300;
+
 /**
  * True only for a single content word that isn't a recognized backchannel
  * ("haan", "achha", ...) — i.e. it reads like the start of a sentence that
@@ -202,8 +213,17 @@ type CallSession = {
   coalesceText: string | null;
   coalesceSpokeAt: number | null;
   coalesceInterrupted: boolean;
-  /** Language detection runs once per call, not per utterance. */
-  languageDetected: boolean;
+  /** How many times each candidate language has been detected this call.
+   * A switch needs LANGUAGE_SWITCH_VOTES agreeing detections — one is what
+   * let the mis-heard "Ice cream" relanguage a lead to Telugu. */
+  languageVotes: Map<SarvamTtsLanguage, number>;
+  /** At most one voice switch per call. A second one costs another socket
+   * rebuild with audio dropped, and past the first it says more about STT
+   * noise on a code-switching line than about the lead. */
+  languageSwitched: boolean;
+  /** A switch waiting for the agent to stop talking — see
+   * switchVoiceLanguage. */
+  languageSwitchTimer: NodeJS.Timeout | null;
   endingCall: boolean;
   /** Set when the call was handed to a rep, so the wrap-up guard records
    * TRANSFERRED_TO_HUMAN instead of inventing a CONNECTED outcome. */
@@ -211,8 +231,20 @@ type CallSession = {
   /** Voice language for this call, reused by the server's own spoken lines
    * (filler, closing) so they match what the agent is speaking. */
   languageCode: SarvamTtsLanguage;
+  /** Which rule picked `languageCode` at call start, for the log line — a
+   * lead opening in an unexpected language should be one grep, not a
+   * reconstruction. */
+  languageSource: TtsLanguageSource;
   silenceTimer: NodeJS.Timeout | null;
   maxCallTimer: NodeJS.Timeout | null;
+  /** When MAX_CALL_MS runs out, as an absolute time, so a cancelled wrap-up
+   * can re-arm the cap for the time actually left on it. */
+  maxCallDeadline: number;
+  /** The pending hangup from an *automatic* wrap-up (silence, max-duration),
+   * kept so a lead who answers during the goodbye can call it off. A
+   * model-decided end_call deliberately leaves none: it already said its
+   * farewell and is meant to end. */
+  wrapUpTimer: NodeJS.Timeout | null;
   fillerTimer: NodeJS.Timeout | null;
   lastSuggestionAt: number;
   suggestionInFlight: boolean;
@@ -279,6 +311,10 @@ function createSession(
   priorCalls: PriorCallBrief[] = [],
   graphFacts: GraphFactsBrief = EMPTY_GRAPH_FACTS,
 ): CallSession {
+  const languageResolution = resolveTtsLanguageWithSource(
+    lead?.state ?? null,
+    lead?.preferredLanguage ?? null,
+  );
   return {
     mode,
     leadId,
@@ -314,15 +350,20 @@ function createSession(
     coalesceText: null,
     coalesceSpokeAt: null,
     coalesceInterrupted: false,
-    languageDetected: false,
+    languageVotes: new Map(),
+    languageSwitched: false,
+    languageSwitchTimer: null,
     endingCall: false,
     transferred: false,
-    // A language this lead was actually heard speaking beats the guess made
-    // from their state, which is only a proxy and is wrong for anyone who
-    // has moved. Falls back to the state map on a first call.
-    languageCode: resolveTtsLanguage(lead?.state ?? null, lead?.preferredLanguage ?? null),
+    // A rep's explicit choice on the lead beats the guess made from their
+    // state, which is only a proxy and is wrong for anyone who has moved.
+    // Falls back to the state map when no rep has set one.
+    languageCode: languageResolution.code,
+    languageSource: languageResolution.source,
     silenceTimer: null,
     maxCallTimer: null,
+    maxCallDeadline: 0,
+    wrapUpTimer: null,
     fillerTimer: null,
     lastSuggestionAt: 0,
     suggestionInFlight: false,
@@ -405,17 +446,62 @@ function wrapUpCall(session: CallSession, callId: string, reason: string) {
   // Nothing follows this line, so it would otherwise sit in Sarvam's buffer
   // until the socket closed — i.e. the goodbye would never be heard.
   session.ttsSession?.flush();
-  setTimeout(() => hangUpAutonomousCall(session, callId, reason), CLOSING_PLAY_MS);
+  session.wrapUpTimer = setTimeout(
+    () => hangUpAutonomousCall(session, callId, reason),
+    CLOSING_PLAY_MS,
+  );
+}
+
+/**
+ * Calls off an automatic wrap-up because the lead turned out to be there
+ * after all. The silence guard can only fire on a timer, and a lead drawing
+ * breath — or one whose sentence Sarvam had not finalized yet — used to be
+ * hung up on mid-question: 7 of the 33 calls logged to 2026-09-18 threw away
+ * the lead's next utterance as they dropped, including a 30t/month
+ * distributor asking what else we stock.
+ *
+ * Only ever cancels a wrap-up *this server* started. `end_call` sets
+ * endingCall without a wrapUpTimer, so a farewell the model chose still ends
+ * the call.
+ */
+function cancelWrapUp(session: CallSession, callId: string) {
+  if (!session.wrapUpTimer || session.finalized) return;
+  clearTimeout(session.wrapUpTimer);
+  session.wrapUpTimer = null;
+  session.endingCall = false;
+  console.log(`[call ${callId}] wrap-up cancelled — the lead is still on the line`);
+  // wrapUpCall cleared every call timer on its way out; the hard cap has to
+  // come back or this call now has no ceiling at all.
+  const remaining = session.maxCallDeadline - Date.now();
+  session.maxCallTimer = setTimeout(
+    () => wrapUpCall(session, callId, "max-duration"),
+    Math.max(0, remaining),
+  );
+  armSilenceTimer(session, callId);
 }
 
 /** Restarted on every sign of life from either side. */
 function armSilenceTimer(session: CallSession, callId: string) {
   if (session.silenceTimer) clearTimeout(session.silenceTimer);
   if (session.endingCall || session.finalized) return;
-  session.silenceTimer = setTimeout(
-    () => wrapUpCall(session, callId, "silence-timeout"),
-    SILENCE_HANGUP_MS,
-  );
+  // The clock has to run from when the caller stops *hearing* us, not from
+  // when the model stopped generating. speakWithCheckpoint hands Plivo a
+  // checkpoint at speak() time, before that utterance's audio exists, so
+  // Plivo acks it the instant its queue drains — routinely with a whole
+  // answer still to synthesize. Arming a flat 15s there hung up on three of
+  // the four calls made on 2026-09-18, each one mid-sentence.
+  const audibleUntil = Math.max(session.audioPlayingUntil, session.speechPendingUntil);
+  const audibleFor = Math.max(0, audibleUntil - Date.now());
+  session.silenceTimer = setTimeout(() => {
+    // Audio keeps arriving after the timer is armed — that is the whole
+    // failure above — so the deadline is re-checked on expiry rather than
+    // trusted from arming time.
+    if (isSpeaking(session)) {
+      armSilenceTimer(session, callId);
+      return;
+    }
+    wrapUpCall(session, callId, "silence-timeout");
+  }, audibleFor + SILENCE_HANGUP_MS);
 }
 
 function clearCallTimers(session: CallSession) {
@@ -425,14 +511,19 @@ function clearCallTimers(session: CallSession) {
     session.fillerTimer,
     session.holdTimer,
     session.coalesceTimer,
+    // Safe for wrapUpCall to clear: it arms its own hangup *after* this runs.
+    session.wrapUpTimer,
+    session.languageSwitchTimer,
   ]) {
     if (t) clearTimeout(t);
   }
   session.silenceTimer = null;
   session.maxCallTimer = null;
+  session.wrapUpTimer = null;
   session.fillerTimer = null;
   session.holdTimer = null;
   session.coalesceTimer = null;
+  session.languageSwitchTimer = null;
 }
 
 function pushToAssist(session: CallSession, message: unknown) {
@@ -1014,15 +1105,24 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
         // agent silent mid-sentence.
         const isNewest = msg.name === `utt-${session.utteranceSeq}`;
         const overshoot = Math.max(0, session.audioPlayingUntil - Date.now());
-        if (isNewest) {
+        // An ack that outran its own audio proves nothing about playback.
+        // speakWithCheckpoint sends the checkpoint at speak() time, so when
+        // the synthesized audio has not arrived yet Plivo acks an empty queue
+        // immediately — and believing it here cleared the speaking clock while
+        // a whole answer was still to play, which also made isSpeaking() lie
+        // and left beginHold() unable to arm Stage A barge-in.
+        const audioStillComing = session.speechPendingUntil > Date.now();
+        if (isNewest && !audioStillComing) {
           session.audioPlayingUntil = 0;
           session.speechPendingUntil = 0;
         }
         console.log(
-          `[call ${callId}] playedStream ack name=${String(msg.name ?? "-")} newest=${isNewest} (local clock ${overshoot}ms ahead)`,
+          `[call ${callId}] playedStream ack name=${String(msg.name ?? "-")} newest=${isNewest} premature=${audioStillComing} (local clock ${overshoot}ms ahead)`,
         );
-        // The AI just stopped talking — start counting silence from here,
-        // not from whenever the lead last spoke.
+        // Start counting silence from the end of our own speech rather than
+        // from whenever the lead last spoke. armSilenceTimer adds whatever is
+        // still queued to play, so a premature ack only moves the clock
+        // earlier than it should, never past the end of the audio.
         armSilenceTimer(session, callId);
       }
     } else if (msg.event === "clearedAudio") {
@@ -1092,26 +1192,84 @@ function setupAssistedStream(session: CallSession, callId: string) {
 }
 
 /**
- * Detects the language the lead is speaking and stores it on the Lead, so
- * the next call to them opens in it rather than in the guess derived from
- * their state. Runs once per call, on the first utterance long enough to
- * carry a signal, and is fire-and-forget: this is an optimisation for the
- * next conversation, so it must never delay or break this one.
+ * Switches the voice to the language the lead is actually speaking.
+ *
+ * Deliberately does NOT write Lead.preferredLanguage any more. It used to,
+ * off a single /text-lid call on the first utterance over 8 characters, and
+ * both writes it ever made were wrong: a West Bengal farmer was stored as
+ * Telugu from the mis-heard "Ice cream" (STT confidence 0.12), another as
+ * English from the fragment "is available." Because preferredLanguage
+ * outranks Lead.state in resolveTtsLanguage, every later call to them opened
+ * in the wrong language — and the column is rep-set now, so nothing here may
+ * overwrite a human's choice.
+ *
+ * The old one-shot `languageDetected` flag was also set *before* awaiting
+ * detectLanguage(), which returns null under the length floor. Calls open
+ * with "Hello", so the flag was burned before it could ever succeed: on most
+ * calls detection never ran at all, and a lead who said outright that they
+ * were more comfortable in Bengali still got English on the next call.
+ *
+ * Fire-and-forget: this must never delay or break the conversation.
  */
-async function rememberSpokenLanguage(session: CallSession, callId: string, text: string) {
-  if (session.languageDetected || !session.leadId) return;
-  session.languageDetected = true; // set before awaiting, so concurrent finals don't race
+async function trackSpokenLanguage(
+  session: CallSession,
+  callId: string,
+  text: string,
+  sttConfidence: number | null,
+) {
+  if (session.languageSwitched) return;
 
   try {
-    const detected = await detectLanguage(text);
+    const detected = await detectLanguage(text, sttConfidence);
+    // A detection matching what we already speak is confirmation, not news.
     if (!detected || detected === session.languageCode) return;
-    await prisma.lead.update({ where: { id: session.leadId }, data: { preferredLanguage: detected } });
-    console.log(
-      `[call ${callId}] lead speaks ${detected}, not ${session.languageCode} (from state) — saved for next call`,
-    );
+
+    // Corroboration. One utterance is exactly what produced "Ice cream" ->
+    // Telugu, so a switch needs the same answer twice.
+    const seen = (session.languageVotes.get(detected) ?? 0) + 1;
+    session.languageVotes.set(detected, seen);
+    if (seen < LANGUAGE_SWITCH_VOTES) {
+      console.log(`[call ${callId}] heard ${detected} (${seen}/${LANGUAGE_SWITCH_VOTES}) — not switching yet`);
+      return;
+    }
+
+    switchVoiceLanguage(session, callId, detected);
   } catch (err) {
     console.error(`[call ${callId}] language detection failed`, err);
   }
+}
+
+/**
+ * Applies a voice switch, waiting for a gap if the agent is mid-turn.
+ *
+ * setLanguage() rebuilds the TTS socket and drops whatever is in flight with
+ * it, so landing this mid-sentence would cut the caller off. The model needs
+ * no prompt update: buildSystemPrompt already tells it to match whatever
+ * language the lead replies in, and it does — it is only the voice that
+ * could not follow.
+ */
+function switchVoiceLanguage(session: CallSession, callId: string, detected: SarvamTtsLanguage) {
+  if (session.languageSwitched || session.endingCall || session.finalized) return;
+
+  if (session.agentTurnInFlight || isSpeaking(session)) {
+    // Re-check on a short timer rather than queueing a callback: the turn may
+    // yet be cancelled by a barge-in, and re-reading the state is cheaper
+    // than unwinding a stale one.
+    if (session.languageSwitchTimer) clearTimeout(session.languageSwitchTimer);
+    session.languageSwitchTimer = setTimeout(
+      () => switchVoiceLanguage(session, callId, detected),
+      LANGUAGE_SWITCH_RETRY_MS,
+    );
+    return;
+  }
+
+  session.languageSwitched = true;
+  const previous = session.languageCode;
+  session.languageCode = detected;
+  // fillerWord() and closingLine() both read session.languageCode, so the
+  // server's own spoken lines follow the switch with no extra wiring.
+  session.ttsSession?.setLanguage(detected);
+  console.log(`[call ${callId}] voice switched ${previous} -> ${detected} (lead is speaking it)`);
 }
 
 /** Phase 2 AI_AUTONOMOUS: STT -> OpenAI tool-calling agent -> TTS playback. */
@@ -1123,10 +1281,13 @@ function setupAutonomousStream(session: CallSession, callId: string) {
   }
 
   const languageCode = session.languageCode;
-  console.log(`[call ${callId}] TTS language=${languageCode} (lead state=${session.leadState ?? "unknown"})`);
+  console.log(
+    `[call ${callId}] TTS language=${languageCode} (source=${session.languageSource}, lead state=${session.leadState ?? "unknown"})`,
+  );
 
   // Guards against a call that never ends on its own.
   armSilenceTimer(session, callId);
+  session.maxCallDeadline = Date.now() + MAX_CALL_MS;
   session.maxCallTimer = setTimeout(() => wrapUpCall(session, callId, "max-duration"), MAX_CALL_MS);
 
   try {
@@ -1142,9 +1303,16 @@ function setupAutonomousStream(session: CallSession, callId: string) {
     });
 
     session.sttSession = createSarvamSttSession({
-      // Stage A. Omitted entirely when the kill switch is set, which restores
-      // exactly the previous final-transcript-only behaviour.
-      onVadStart: TWO_STAGE_BARGE_IN ? (event) => beginHold(session, callId, event) : undefined,
+      onVadStart: (event) => {
+        // Speech onset is the earliest proof the line is alive. Sarvam needs
+        // 300ms of trailing silence before it emits a final, and only a final
+        // used to restart the silence clock — so a lead part-way through an
+        // answer was invisible to the guard and got hung up on mid-sentence.
+        armSilenceTimer(session, callId);
+        // Stage A. Skipped when the kill switch is set, which restores exactly
+        // the previous final-transcript-only barge-in behaviour.
+        if (TWO_STAGE_BARGE_IN) beginHold(session, callId, event);
+      },
       onVadEnd: TWO_STAGE_BARGE_IN
         ? () => {
             // Deliberately does NOT resume: Sarvam delivers the substantive
@@ -1157,7 +1325,7 @@ function setupAutonomousStream(session: CallSession, callId: string) {
             }
           }
         : undefined,
-      onTranscript: ({ text, isFinal, utteranceIdx, language }) => {
+      onTranscript: ({ text, isFinal, utteranceIdx, language, languageConfidence }) => {
         if (language) session.lastLanguage = language;
 
         if (!isFinal) {
@@ -1192,7 +1360,7 @@ function setupAutonomousStream(session: CallSession, callId: string) {
         }
 
         session.transcriptSegments.push(`Lead: ${text}`);
-        void rememberSpokenLanguage(session, callId, text);
+        void trackSpokenLanguage(session, callId, text, languageConfidence);
 
         // Stage B may already have committed on the partial; either way the
         // model has to be told it was cut off.
@@ -1279,6 +1447,10 @@ async function runNextAgentTurn(
    * the wait the caller really experienced. */
   spokeAt = Date.now(),
 ) {
+  // The lead answered during an automatic goodbye — call it off and take the
+  // turn rather than hanging up on them. A model-chosen end_call sets
+  // endingCall with no wrapUpTimer, so that farewell still stands.
+  if (session.endingCall) cancelWrapUp(session, callId);
   if (session.endingCall || !session.leadId) {
     console.log(`[call ${callId}] dropped turn (ending=${session.endingCall}): "${userUtterance.slice(0, 80)}"`);
     return;

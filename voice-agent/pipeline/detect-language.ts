@@ -7,12 +7,13 @@
  * text like "হ্যাঁ ওখানেই চাই" — while /text-lid got all eight right,
  * including romanized Hindi ("Bataiye" -> hi-IN) and code-mixed lines.
  *
- * The result is stored on Lead.preferredLanguage so the NEXT call to that
- * lead opens in their language. It deliberately does not switch the voice
- * mid-call: Sarvam's TTS config is sent once at socket connect, so changing
- * it means tearing down and rebuilding the socket, and swapping voice
- * halfway through a conversation sounds worse than finishing in the one it
- * started with.
+ * The result is used *within the call only*, to switch the TTS voice to match
+ * the lead (see trackSpokenLanguage in server.ts). It is deliberately no
+ * longer written to Lead.preferredLanguage: that column is rep-set now.
+ * Auto-writing it corrupted two real leads — one West Bengal farmer was
+ * relanguaged to Telugu off the single mis-heard utterance "Ice cream"
+ * (STT confidence 0.12), and every later call to them opened in the wrong
+ * language with no way for a rep to see or fix it.
  */
 import type { SarvamTtsLanguage } from "./tts-language.js";
 
@@ -25,13 +26,27 @@ const SPEAKABLE = new Set<string>([
   "bn-IN", "en-IN", "gu-IN", "hi-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN",
 ]);
 
-/** Below this, a detection is more likely noise than signal — "Hello" and
- * "ok" carry no language information worth persisting. */
-const MIN_CHARS = 8;
+/** Below this, a detection is more likely noise than signal. Was 8, which let
+ * the two-word mis-hear "Ice cream" (9 chars) decide a lead's language; a
+ * real answer that carries language information is longer than this. */
+const MIN_CHARS = 20;
 
-export async function detectLanguage(text: string): Promise<SarvamTtsLanguage | null> {
+/** Sarvam's STT confidence below which a final is not worth classifying at
+ * all. Both bad detections on record came from finals under this: "Ice cream"
+ * at 0.12 and "is available." at 0.56. Language ID cannot be better than the
+ * transcript it is handed. */
+const MIN_STT_CONFIDENCE = 0.7;
+
+export async function detectLanguage(
+  text: string,
+  /** Sarvam's confidence for the final this text came from, when known.
+   * Omitted means "not from STT" and skips the gate. */
+  sttConfidence?: number | null,
+): Promise<SarvamTtsLanguage | null> {
   const apiKey = process.env.SARVAM_API_KEY;
   if (!apiKey) return null;
+
+  if (typeof sttConfidence === "number" && sttConfidence < MIN_STT_CONFIDENCE) return null;
 
   const trimmed = text.trim();
   if (trimmed.length < MIN_CHARS) return null;

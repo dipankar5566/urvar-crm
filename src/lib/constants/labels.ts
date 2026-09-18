@@ -190,6 +190,31 @@ export const ROLE_LABELS: Record<string, string> = {
   ACCOUNTS_TEAM: "Accounts Team",
 };
 
+/**
+ * Languages an AI call can be placed in — the eleven BCP-47 codes Sarvam's
+ * TTS accepts, and the only values `Lead.preferredLanguage` may hold.
+ *
+ * Mirrors LANGUAGE_NAMES in voice-agent/pipeline/tts-language.ts, which is
+ * the authoritative list. Duplicated rather than imported on purpose: the
+ * voice agent is a separate PM2 process and nothing under src/ imports from
+ * it. If Sarvam adds a voice, both lists change together.
+ *
+ * Leaving the field null is the normal case — the lead's state then decides.
+ */
+export const PREFERRED_LANGUAGE_LABELS: Record<string, string> = {
+  "bn-IN": "Bengali",
+  "en-IN": "English",
+  "gu-IN": "Gujarati",
+  "hi-IN": "Hindi",
+  "kn-IN": "Kannada",
+  "ml-IN": "Malayalam",
+  "mr-IN": "Marathi",
+  "od-IN": "Odia",
+  "pa-IN": "Punjabi",
+  "ta-IN": "Tamil",
+  "te-IN": "Telugu",
+};
+
 export function inr(amount: number | string | null | undefined): string {
   if (amount === null || amount === undefined) return "—";
   const n = typeof amount === "string" ? Number(amount) : amount;

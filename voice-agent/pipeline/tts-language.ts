@@ -118,27 +118,46 @@ export function closingLine(code: SarvamTtsLanguage): string {
   return (PHRASES[code] ?? FALLBACK_PHRASES).closing;
 }
 
+/** Which rule decided the voice — reported in the log so a surprising
+ * language can be traced without guessing. */
+export type TtsLanguageSource = "env-override" | "rep-set" | "state" | "default";
+
 /**
  * Resolves the voice language for a call, in priority order:
  *
  *   1. `SARVAM_TTS_LANGUAGE` — a global override, for testing one voice
  *      across every call.
- *   2. `preferred` — a language this lead was actually heard speaking on an
- *      earlier call (see detect-language.ts). Evidence beats inference.
+ *   2. `preferred` — `Lead.preferredLanguage`, set by a rep in the CRM.
+ *      A human's explicit choice beats the state proxy. This used to be
+ *      auto-written from one /text-lid detection per call and was wrong both
+ *      times it ever fired (see detect-language.ts); nothing in the voice
+ *      agent writes it now.
  *   3. The lead's state — a proxy, and wrong for anyone who has moved.
  *   4. Hindi.
  */
+export function resolveTtsLanguageWithSource(
+  state: string | null | undefined,
+  preferred?: string | null,
+): { code: SarvamTtsLanguage; source: TtsLanguageSource } {
+  const override = process.env.SARVAM_TTS_LANGUAGE;
+  if (override) return { code: override as SarvamTtsLanguage, source: "env-override" };
+
+  // Guarded because the column is a free-text String?, so a stale or bad
+  // value could otherwise reach Sarvam's TTS config and be rejected mid-call.
+  if (preferred && preferred in LANGUAGE_NAMES) {
+    return { code: preferred as SarvamTtsLanguage, source: "rep-set" };
+  }
+
+  const normalized = (state ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  const mapped = STATE_TO_LANGUAGE[normalized];
+  if (mapped) return { code: mapped, source: "state" };
+
+  return { code: DEFAULT_TTS_LANGUAGE, source: "default" };
+}
+
 export function resolveTtsLanguage(
   state: string | null | undefined,
   preferred?: string | null,
 ): SarvamTtsLanguage {
-  const override = process.env.SARVAM_TTS_LANGUAGE;
-  if (override) return override as SarvamTtsLanguage;
-
-  // Guarded because the column is a free-text String?, so a stale or bad
-  // value could otherwise reach Sarvam's TTS config and be rejected mid-call.
-  if (preferred && preferred in LANGUAGE_NAMES) return preferred as SarvamTtsLanguage;
-
-  const normalized = (state ?? "").toLowerCase().replace(/[^a-z]/g, "");
-  return STATE_TO_LANGUAGE[normalized] ?? DEFAULT_TTS_LANGUAGE;
+  return resolveTtsLanguageWithSource(state, preferred).code;
 }

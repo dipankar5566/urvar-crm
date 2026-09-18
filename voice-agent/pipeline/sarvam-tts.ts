@@ -46,6 +46,13 @@ export type SarvamTtsSession = {
    * The next `speak()` is queued and flushed automatically once the new
    * connection is up. */
   reset: () => void;
+  /** Switches the synthesized voice mid-call, for a lead who turns out to
+   * speak something other than the language we opened in. Sarvam sends
+   * `language_code` once in the config frame at connect, so the only way to
+   * change it is to replace the socket — which is exactly what `reset()`
+   * already does safely. Shares its semantics: audio in flight is dropped,
+   * so only call this between turns. */
+  setLanguage: (code: SarvamTtsLanguage) => void;
   close: () => void;
 };
 
@@ -95,6 +102,9 @@ export function createSarvamTtsSession(opts: {
   // handlers close over a locally-scoped `sock` rather than the outer `ws`
   // so a handler never fires against a socket a later reconnect replaced.
   let ws: WebSocket;
+  /** Mutable so the voice can follow a lead who turns out to speak another
+   * language — see setLanguage(). Every (re)connect sends the current value. */
+  let languageCode = opts.languageCode;
   let configSent = false;
   let closedByCaller = false;
   let audioChunksReceived = 0;
@@ -134,8 +144,10 @@ export function createSarvamTtsSession(opts: {
             // language_code IS required (unlike STT, TTS has no "auto" —
             // it needs one fixed BCP-47 code from a fixed enum since it has
             // to know what to synthesize, not detect). Resolved per lead
-            // from their state by the caller — see tts-language.ts.
-            language_code: opts.languageCode,
+            // from their state by the caller — see tts-language.ts. Read from
+            // the mutable `languageCode` rather than `opts` so a mid-call
+            // setLanguage() takes effect on the socket this reconnect opens.
+            language_code: languageCode,
             // The real field name is `speech_sample_rate`, not
             // `target_sample_rate` (that was a guess that doesn't exist in
             // Sarvam's schema — unrecognized fields are silently ignored,
@@ -221,6 +233,30 @@ export function createSarvamTtsSession(opts: {
     sock.on("error", (err) => opts.onError(err instanceof Error ? err : new Error(String(err))));
   }
 
+  /**
+   * Replaces the live socket with a fresh one.
+   *
+   * Sarvam has no "stop synthesizing" control message and its audio frames
+   * carry no utterance id, so there is no way to tell the tail of a cancelled
+   * sentence from the start of the next one. Replacing the socket is the only
+   * thing that actually guarantees silence: the old generation's handlers stop
+   * forwarding immediately, even before the close completes. Queued text is
+   * dropped with it — it belonged to the utterance being abandoned.
+   *
+   * Shared by reset() (barge-in) and setLanguage() (voice switch), which need
+   * identical teardown and differ only in why.
+   */
+  function replaceSocket(reason: string) {
+    const previous = ws;
+    pendingText.length = 0;
+    pendingFlush = false;
+    connect();
+    if (previous.readyState === WebSocket.OPEN || previous.readyState === WebSocket.CONNECTING) {
+      previous.close();
+    }
+    console.log(`[sarvam-tts] ${reason} — socket replaced, cancelled audio dropped`);
+  }
+
   connect();
 
   return {
@@ -245,21 +281,15 @@ export function createSarvamTtsSession(opts: {
     },
     reset() {
       if (closedByCaller) return;
-      // Sarvam has no "stop synthesizing" control message and its audio frames
-      // carry no utterance id, so there is no way to tell the tail of a
-      // cancelled sentence from the start of the next one. Replacing the
-      // socket is the only thing that actually guarantees silence: the old
-      // generation's handlers stop forwarding immediately, even before the
-      // close completes. Queued text is dropped with it — it belonged to the
-      // utterance being abandoned.
-      const previous = ws;
-      pendingText.length = 0;
-      pendingFlush = false;
-      connect();
-      if (previous.readyState === WebSocket.OPEN || previous.readyState === WebSocket.CONNECTING) {
-        previous.close();
-      }
-      console.log("[sarvam-tts] reset — socket replaced, cancelled audio dropped");
+      replaceSocket("reset");
+    },
+    setLanguage(code: SarvamTtsLanguage) {
+      if (closedByCaller || code === languageCode) return;
+      const previous = languageCode;
+      // Set before reconnecting: connect() reads this when it builds the
+      // config frame, so the new socket comes up already speaking `code`.
+      languageCode = code;
+      replaceSocket(`language ${previous} -> ${code}`);
     },
     close() {
       closedByCaller = true;

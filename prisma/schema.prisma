@@ -359,11 +359,13 @@ model Lead {
   // Phase-2 hooks (free, nullable)
   whatsappOptIn         Boolean?
   leadScore             Int?
-  // BCP-47 code (e.g. "bn-IN") of the language this lead actually spoke on a
-  // call, detected via Sarvam's /text-lid. Lets the next call open in their
-  // language instead of the Lead.state guess in tts-language.ts, which is
-  // only a proxy and is wrong for anyone who has moved states. Mirrors the
-  // (still unused) Customer.preferredLanguage.
+  // BCP-47 code (e.g. "bn-IN") of the language AI calls to this lead should
+  // open in, overriding the Lead.state guess in tts-language.ts (a proxy,
+  // wrong for anyone who has moved states). Null means "use the state".
+  // Set by a rep in the lead form — deliberately NOT written by the voice
+  // agent: auto-detecting it from one utterance per call stored Telugu for a
+  // West Bengal farmer off the mis-heard "Ice cream", and nothing in the UI
+  // showed it. Mirrors the (still unused) Customer.preferredLanguage.
   preferredLanguage     String?
 
   assignedToId String?

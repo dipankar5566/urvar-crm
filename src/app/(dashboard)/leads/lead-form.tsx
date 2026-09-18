@@ -24,6 +24,7 @@ import {
 import {
   LEAD_SOURCE_LABELS,
   CUSTOMER_TYPE_LABELS,
+  PREFERRED_LANGUAGE_LABELS,
 } from "@/lib/constants/labels";
 import { STATES, districtsForState } from "@/lib/constants/territories";
 import { createLead, updateLead } from "./actions";
@@ -52,7 +53,14 @@ type LeadFormValues = {
   isGovernmentTender: boolean;
   remarks: string;
   assignedToId: string;
+  /** "" means "decide from the lead's state" — see AUTO_LANGUAGE. */
+  preferredLanguage: string;
 };
+
+/** Radix's SelectItem refuses an empty value, so the "decide from state"
+ * choice needs a sentinel. It is mapped back to "" on the way in and out, and
+ * never reaches the server. */
+const AUTO_LANGUAGE = "AUTO";
 
 const EMPTY: LeadFormValues = {
   name: "",
@@ -75,6 +83,7 @@ const EMPTY: LeadFormValues = {
   isGovernmentTender: false,
   remarks: "",
   assignedToId: "",
+  preferredLanguage: "",
 };
 
 export function LeadForm({
@@ -273,6 +282,31 @@ export function LeadForm({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Call Language</Label>
+            <Select
+              value={values.preferredLanguage || AUTO_LANGUAGE}
+              onValueChange={(v) => {
+                const code = v as string;
+                set("preferredLanguage", code === AUTO_LANGUAGE ? "" : code);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={AUTO_LANGUAGE}>Auto (from state)</SelectItem>
+                {Object.entries(PREFERRED_LANGUAGE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-xs">
+              Language AI calls open in. Auto picks it from the lead&apos;s state.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Source *</Label>

@@ -54,6 +54,7 @@ export default async function EditLeadPage({
           expectedMonthlyValue: lead.expectedMonthlyValue?.toString() ?? "",
           estimatedValue: lead.estimatedValue?.toString() ?? "",
           cropInterest: lead.cropInterest ?? "",
+          preferredLanguage: lead.preferredLanguage ?? "",
           isGovernmentTender: lead.isGovernmentTender,
           remarks: lead.remarks ?? "",
           assignedToId: lead.assignedToId ?? "",
