@@ -341,8 +341,15 @@ async function sendStaleLeadEscalations(now: Date): Promise<number> {
     take: 100,
   });
 
+  // Counts actual Notification rows created, not the query result size —
+  // repStale.length also includes leads whose assignedTo turned out to be
+  // null (the `assignedToId: { not: null }` filter guards against a
+  // dangling FK, not a genuinely missing assignee) and would otherwise
+  // overstate how many reps were actually nudged.
+  let repNotified = 0;
   for (const lead of repStale) {
     if (!lead.assignedTo) continue;
+    repNotified++;
     const title = `${STALE_LEAD_REP_ALERT_PREFIX}${lead.name} has had no call yet`;
     const body = `${lead.name} (${lead.leadNumber}) was created ${STALE_LEAD_REP_ALERT_HOURS}+ hours ago with no call logged.`;
 
@@ -383,6 +390,9 @@ async function sendStaleLeadEscalations(now: Date): Promise<number> {
     take: 100,
   });
 
+  // Same reasoning as repNotified: only counts leads where a manager was
+  // actually found and notified, not every lead the query matched.
+  let managerNotified = 0;
   for (const lead of managerStale) {
     const managers = await prisma.user.findMany({
       where: { role: "SALES_MANAGER", isActive: true, territoryStates: { has: lead.state } },
@@ -390,11 +400,15 @@ async function sendStaleLeadEscalations(now: Date): Promise<number> {
     });
     // No manager covers this lead's state — nothing to escalate to. Left as
     // a console note rather than silently dropped, since it likely means a
-    // territory has no manager assigned yet, which is worth someone noticing.
+    // territory has no manager assigned yet (or, as found in testing,
+    // Lead.state holding a compound "district, sub-district, state" string
+    // that can't match a manager's clean territoryStates entry — a
+    // pre-existing data-quality issue this sweep surfaces rather than causes).
     if (managers.length === 0) {
       console.warn(`[reminder-cron] stale lead ${lead.id} has no SALES_MANAGER covering state ${lead.state}`);
       continue;
     }
+    managerNotified++;
 
     const title = `${STALE_LEAD_MANAGER_ALERT_PREFIX}${lead.name} is still unworked`;
     const body = `${lead.name} (${lead.leadNumber}) has had no call logged in ${STALE_LEAD_MANAGER_ALERT_HOURS}+ hours.`;
@@ -426,7 +440,7 @@ async function sendStaleLeadEscalations(now: Date): Promise<number> {
     }
   }
 
-  return repStale.length + managerStale.length;
+  return repNotified + managerNotified;
 }
 
 /**
