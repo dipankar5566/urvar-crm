@@ -9,6 +9,7 @@ import { Icon } from "@/components/icon";
 import {
   NAV_ITEMS,
   NAV_SECTION_LABELS,
+  NAV_SECTION_ORDER,
   ALWAYS_VISIBLE_HREFS,
   type NavItem,
 } from "@/lib/constants/nav";
@@ -68,7 +69,7 @@ export function NavLinks({
   }
 
   const main = items.filter((i) => !i.section);
-  const sections: ("sales" | "admin")[] = ["sales", "admin"];
+  const sections = NAV_SECTION_ORDER;
 
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-1.5 pb-3">

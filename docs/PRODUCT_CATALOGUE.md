@@ -6,20 +6,33 @@ quality audit (`docs/VOICE_QUALITY_AUDIT.md`) — the empty catalogue was the
 single largest cap on sales quality found in that audit, larger than the
 voice or the prompt.
 
-## Current state, as of 2026-09-19
+## Current state, as of 2026-09-20
 
 ```
-Product rows: 4  (all active, all mrp=0)
-  URNP0108  Enriched Vermicompost          25 kg     dealerPrice 237.50
-  URNP0109  Phosphate Rich Organic Manure  50 kg     dealerPrice 750.00
-  URNP0110  Liquid Humic Acid              1 liter   dealerPrice  90.00
-  URNP0111  Cow Dung Manure [FYM]          25 kg     dealerPrice 175.00
+Product rows: 4  (all active)
+  SKU       Name                           Pack      MRP      Dealer   HSN   GST
+  URNP0108  Enriched Vermicompost          25 kg      350.00   237.50  3101   5%
+  URNP0109  Phosphate Rich Organic Manure  50 kg     1499.00   750.00  3101   5%
+  URNP0110  Liquid Humic Acid              1 liter    200.00    90.00  3101   5%
+  URNP0111  Cow Dung Manure [FYM]          25 kg      250.00   175.00  3101   5%
 ```
 
-Three more products were added on 2026-09-18; the earlier claim of one row is
-why this section now carries a date. What has **not** changed is the part that
-actually limits the AI caller: `mrp` is still `0` on all four, so every one of
-them renders as "price not set, must be confirmed".
+**Prices have since been filled in.** This section previously recorded `mrp=0`
+on all four, which was true on 2026-09-19 and is no longer; the AI caller can
+now quote a real price rather than "price not set, must be confirmed". Three
+more products were added on 2026-09-18; the earlier claim of one row is why
+this section carries a date.
+
+Two data questions surfaced by the accounting audit (see
+`ACCOUNTING_SYSTEM_AUDIT.md`) and still open:
+
+- **All four carry HSN `3101`.** Plausible for vermicompost, FYM and PROM —
+  animal or vegetable fertilisers — but doubtful for Liquid Humic Acid. HSN
+  drives the GST rate and the return, so this needs an accountant, not a guess.
+  `TaxRate` holds the 5% rate as **unverified** until someone signs it off, and
+  invoicing is blocked on that row.
+- The 25 kg vs 5 kg pack-size disagreement below is still unresolved, and now
+  matters more: pack size reaches an invoice, not just a quotation.
 
 `nutrientContent`, `problemSolved` and `description` were filled on
 2026-09-19 from the knowledge graph by `scripts/enrich-products-from-graph.ts`

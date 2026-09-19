@@ -1,7 +1,7 @@
 import type { Role } from "@/generated/prisma/enums";
 import type { Module } from "@/lib/permissions";
 
-export type NavSection = "sales" | "admin";
+export type NavSection = "sales" | "accounts" | "admin";
 
 export type NavItem = {
   label: string;
@@ -13,8 +13,17 @@ export type NavItem = {
 
 export const NAV_SECTION_LABELS: Record<NavSection, string> = {
   sales: "Sales",
+  accounts: "Accounts",
   admin: "Admin",
 };
+
+/**
+ * Render order of the labelled sections. Derived from NAV_SECTION_LABELS so
+ * adding a section here is the only step — the sidebar previously carried its
+ * own hardcoded copy of this list, which would silently drop any section not
+ * added to both places.
+ */
+export const NAV_SECTION_ORDER: NavSection[] = ["sales", "accounts", "admin"];
 
 /**
  * Sidebar navigation. Each item is shown only if the user's role has read
@@ -32,6 +41,12 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Distributors", href: "/customers/distributors", icon: "Network", module: "customers", section: "sales" },
   { label: "Products", href: "/products", icon: "Package", module: "products", section: "sales" },
   { label: "Quotations", href: "/quotations", icon: "FileText", module: "quotations", section: "sales" },
+  // Accounts. Gated by the `accounting` module, which is NONE for all three
+  // sales roles — so this whole section is invisible to them, the same way
+  // Purchases already is.
+  { label: "Chart of Accounts", href: "/accounting", icon: "BookOpen", module: "accounting", section: "accounts" },
+  { label: "Journal", href: "/accounting/journal", icon: "BookText", module: "accounting", section: "accounts" },
+  { label: "Periods", href: "/accounting/periods", icon: "CalendarRange", module: "accounting", section: "accounts" },
   // Procurement sits under Admin, not Sales: only SUPER_ADMIN and
   // ACCOUNTS_TEAM have `purchases` read access, so sales roles never see it.
   { label: "Purchases", href: "/purchases", icon: "Receipt", module: "purchases", section: "admin" },

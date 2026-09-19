@@ -228,17 +228,17 @@ enum FileCategory {
 // ============================================================
 
 model User {
-  id            String   @id @default(cuid())
+  id            String  @id @default(cuid())
   name          String
-  email         String   @unique
-  emailVerified Boolean  @default(false)
+  email         String  @unique
+  emailVerified Boolean @default(false)
   image         String?
 
   // App-specific fields
-  role            Role     @default(SALES_EXECUTIVE)
+  role            Role      @default(SALES_EXECUTIVE)
   phone           String?
-  territoryStates String[] @default([])
-  isActive        Boolean  @default(true)
+  territoryStates String[]  @default([])
+  isActive        Boolean   @default(true)
   lastLoginAt     DateTime?
 
   // Plivo Voice: persistent SIP Endpoint credentials for in-browser calling,
@@ -255,24 +255,26 @@ model User {
   accounts Account[]
 
   // App relations
-  ownedLeads       Lead[]                 @relation("LeadOwner")
-  ownedCustomers   Customer[]             @relation("CustomerOwner")
-  calls            Call[]
-  transferredCalls Call[]                 @relation("CallTransferredTo")
-  followUps        FollowUp[]
-  assignedTasks    Task[]                 @relation("TaskAssignee")
-  createdTasks     Task[]                 @relation("TaskCreator")
-  createdQuotations Quotation[]           @relation("QuotationCreator")
-  createdOrders    Order[]                @relation("OrderCreator")
-  createdSuppliers        Supplier[]        @relation("SupplierCreator")
-  createdPurchaseInvoices PurchaseInvoice[] @relation("PurchaseInvoiceCreator")
-  leadActivities   LeadActivity[]
-  pipelineMoves    PipelineStageHistory[]
-  uploadedFiles    File[]
-  notifications    Notification[]
-  sentMessages     MessageLog[]
-  fieldVisits      FieldVisit[]
-  auditLogs        AuditLog[]
+  ownedLeads              Lead[]                 @relation("LeadOwner")
+  ownedCustomers          Customer[]             @relation("CustomerOwner")
+  calls                   Call[]
+  transferredCalls        Call[]                 @relation("CallTransferredTo")
+  followUps               FollowUp[]
+  assignedTasks           Task[]                 @relation("TaskAssignee")
+  createdTasks            Task[]                 @relation("TaskCreator")
+  createdQuotations       Quotation[]            @relation("QuotationCreator")
+  createdOrders           Order[]                @relation("OrderCreator")
+  createdSuppliers        Supplier[]             @relation("SupplierCreator")
+  createdPurchaseInvoices PurchaseInvoice[]      @relation("PurchaseInvoiceCreator")
+  leadActivities          LeadActivity[]
+  pipelineMoves           PipelineStageHistory[]
+  uploadedFiles           File[]
+  notifications           Notification[]
+  sentMessages            MessageLog[]
+  fieldVisits             FieldVisit[]
+  auditLogs               AuditLog[]
+  postedEntries           JournalEntry[]         @relation("JournalPoster")
+  closedPeriods           FinancialPeriod[]      @relation("PeriodCloser")
 
   @@index([role])
 }
@@ -326,39 +328,39 @@ model Verification {
 // ============================================================
 
 model Lead {
-  id          String     @id @default(cuid())
-  leadNumber  String     @unique
-  name        String
-  companyName String?
+  id            String       @id @default(cuid())
+  leadNumber    String       @unique
+  name          String
+  companyName   String?
   contactPerson String?
-  phone       String
-  whatsapp    String?
-  altPhone    String?
-  email       String?
-  state       String
-  district    String
-  pincode     String?
-  address     String?
-  source      LeadSource @default(DIRECT_CALL)
-  status      LeadStatus @default(NEW)
-  customerType CustomerType @default(B2C_FARMER)
+  phone         String
+  whatsapp      String?
+  altPhone      String?
+  email         String?
+  state         String
+  district      String
+  pincode       String?
+  address       String?
+  source        LeadSource   @default(DIRECT_CALL)
+  status        LeadStatus   @default(NEW)
+  customerType  CustomerType @default(B2C_FARMER)
 
-  interestedProducts    String?
-  expectedQuantity      String?
-  expectedMonthlyValue  Decimal? @db.Decimal(12, 2)
-  estimatedValue        Decimal? @db.Decimal(12, 2)
-  cropInterest          String?
-  isGovernmentTender    Boolean  @default(false)
-  remarks               String?
-  lostReason            String?
+  interestedProducts   String?
+  expectedQuantity     String?
+  expectedMonthlyValue Decimal? @db.Decimal(12, 2)
+  estimatedValue       Decimal? @db.Decimal(12, 2)
+  cropInterest         String?
+  isGovernmentTender   Boolean  @default(false)
+  remarks              String?
+  lostReason           String?
 
   // AI Voice Agent: opt-out enforced by the outbound campaign scheduler (Phase 3)
   doNotCall       Boolean @default(false)
   doNotCallReason String?
 
   // Phase-2 hooks (free, nullable)
-  whatsappOptIn         Boolean?
-  leadScore             Int?
+  whatsappOptIn     Boolean?
+  leadScore         Int?
   // BCP-47 code (e.g. "bn-IN") of the language AI calls to this lead should
   // open in, overriding the Lead.state guess in tts-language.ts (a proxy,
   // wrong for anyone who has moved states). Null means "use the state".
@@ -366,7 +368,7 @@ model Lead {
   // agent: auto-detecting it from one utterance per call stored Telugu for a
   // West Bengal farmer off the mis-heard "Ice cream", and nothing in the UI
   // showed it. Mirrors the (still unused) Customer.preferredLanguage.
-  preferredLanguage     String?
+  preferredLanguage String?
 
   assignedToId String?
   assignedTo   User?   @relation("LeadOwner", fields: [assignedToId], references: [id])
@@ -379,17 +381,17 @@ model Lead {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  pipeline   Pipeline?
-  activities LeadActivity[]
-  calls      Call[]
-  followUps  FollowUp[]
-  tasks      Task[]
-  quotations Quotation[]
-  orders     Order[]
+  pipeline      Pipeline?
+  activities    LeadActivity[]
+  calls         Call[]
+  followUps     FollowUp[]
+  tasks         Task[]
+  quotations    Quotation[]
+  orders        Order[]
   notifications Notification[]
   messageLogs   MessageLog[]
   fieldVisits   FieldVisit[]
-  files      File[]
+  files         File[]
 
   @@index([status])
   @@index([state])
@@ -398,15 +400,15 @@ model Lead {
 }
 
 model Pipeline {
-  id              String        @id @default(cuid())
-  leadId          String        @unique
-  lead            Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  stage           PipelineStage @default(NEW_LEAD)
-  enteredStageAt  DateTime      @default(now())
+  id                String        @id @default(cuid())
+  leadId            String        @unique
+  lead              Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  stage             PipelineStage @default(NEW_LEAD)
+  enteredStageAt    DateTime      @default(now())
   expectedCloseDate DateTime?
-  probability     Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  probability       Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   stageHistory PipelineStageHistory[]
 
@@ -414,14 +416,14 @@ model Pipeline {
 }
 
 model PipelineStageHistory {
-  id         String        @id @default(cuid())
+  id         String         @id @default(cuid())
   pipelineId String
-  pipeline   Pipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  pipeline   Pipeline       @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   fromStage  PipelineStage?
   toStage    PipelineStage
   movedById  String
-  movedBy    User          @relation(fields: [movedById], references: [id])
-  movedAt    DateTime      @default(now())
+  movedBy    User           @relation(fields: [movedById], references: [id])
+  movedAt    DateTime       @default(now())
 
   @@index([pipelineId])
 }
@@ -457,8 +459,8 @@ model Call {
   createdAt       DateTime      @default(now())
 
   // Provider Voice (in-browser calling) fields — null/MANUAL for Sprint 2 manual logs
-  provider        CallProvider  @default(MANUAL)
-  providerCallSid String?       @unique
+  provider        CallProvider @default(MANUAL)
+  providerCallSid String?      @unique
   providerStatus  String?
   recordingUrl    String?
   recordingSid    String?
@@ -467,25 +469,25 @@ model Call {
 
   // AI Voice Agent (Phase 0+): AI transcript/outcome metadata, supplementary
   // to the human-picked outcome/notes above — never overwrites them.
-  callMode        CallMode       @default(HUMAN)
-  transcript      Json?
+  callMode       CallMode       @default(HUMAN)
+  transcript     Json?
   /// Structured extraction of the call: crop, acreage, quantity, objections,
   /// purchase intent, next action. A free-text summary reads well but cannot
   /// be queried or fed back into the next call's prompt; this can.
-  aiStructured    Json?
+  aiStructured   Json?
   /// Per-call latency and audio-transport telemetry — see
   /// voice-agent/pipeline/turn-metrics.ts. Stored per call rather than per
   /// turn: the write piggybacks on the update finalizeSession already makes,
   /// and a call's turns are always read together anyway.
-  aiMetrics       Json?
-  aiSummary       String?
-  aiSentiment     CallSentiment?
-  aiIntentTags    String[]       @default([])
-  aiAgentVersion  String?
+  aiMetrics      Json?
+  aiSummary      String?
+  aiSentiment    CallSentiment?
+  aiIntentTags   String[]       @default([])
+  aiAgentVersion String?
 
   // Live-transfer handoff target (Phase 2)
   transferredToUserId String?
-  transferredToUser   User?    @relation("CallTransferredTo", fields: [transferredToUserId], references: [id])
+  transferredToUser   User?   @relation("CallTransferredTo", fields: [transferredToUserId], references: [id])
 
   // Flag-for-callback handoff (Phase 2): the FollowUp task the AI created
   followUpId String?   @unique
@@ -643,8 +645,8 @@ model Product {
   objectionNotes    String?
   availability      String?
 
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   quotationItems QuotationItem[]
   purchaseItems  PurchaseInvoiceItem[]
@@ -653,34 +655,34 @@ model Product {
 }
 
 model Quotation {
-  id                String          @id @default(cuid())
-  quotationNumber   String          @unique
-  leadId            String?
-  lead              Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  customerId        String?
-  customer          Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  createdById       String
-  createdBy         User            @relation("QuotationCreator", fields: [createdById], references: [id])
-  status            QuotationStatus @default(DRAFT)
-  validUntil        DateTime?
-  subtotal          Decimal         @default(0) @db.Decimal(14, 2)
-  discountPercent   Decimal         @default(0) @db.Decimal(5, 2)
-  discountAmount    Decimal         @default(0) @db.Decimal(14, 2)
-  freightAmount     Decimal         @default(0) @db.Decimal(12, 2)
-  taxAmount         Decimal         @default(0) @db.Decimal(14, 2)
-  totalAmount       Decimal         @default(0) @db.Decimal(14, 2)
+  id                 String          @id @default(cuid())
+  quotationNumber    String          @unique
+  leadId             String?
+  lead               Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  customerId         String?
+  customer           Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdById        String
+  createdBy          User            @relation("QuotationCreator", fields: [createdById], references: [id])
+  status             QuotationStatus @default(DRAFT)
+  validUntil         DateTime?
+  subtotal           Decimal         @default(0) @db.Decimal(14, 2)
+  discountPercent    Decimal         @default(0) @db.Decimal(5, 2)
+  discountAmount     Decimal         @default(0) @db.Decimal(14, 2)
+  freightAmount      Decimal         @default(0) @db.Decimal(12, 2)
+  taxAmount          Decimal         @default(0) @db.Decimal(14, 2)
+  totalAmount        Decimal         @default(0) @db.Decimal(14, 2)
   termsAndConditions String?
-  notes             String?
-  sentAt            DateTime?
-  respondedAt       DateTime?
+  notes              String?
+  sentAt             DateTime?
+  respondedAt        DateTime?
   /// Phase 6 of the sales-funnel automation roadmap: an unguessable bearer
   /// token minted when a quotation moves to SENT, letting the customer
   /// accept it via an emailed link (src/app/api/quotations/accept/[token])
   /// with no CRM session. Nullable because DRAFT quotations, and any
   /// quotation sent before this shipped, have none.
-  acceptToken       String?         @unique
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  acceptToken        String?         @unique
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
   items       QuotationItem[]
   order       Order?
@@ -760,25 +762,25 @@ model Notification {
 ///
 /// Attaches to either a Lead or a Customer, never both, exactly like Call.
 model MessageLog {
-  id          String    @id @default(cuid())
+  id          String     @id @default(cuid())
   leadId      String?
-  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead        Lead?      @relation(fields: [leadId], references: [id], onDelete: Cascade)
   customerId  String?
-  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer    Customer?  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   /// The quotation this message was about, when it was about one.
   quotationId String?
   quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
   /// Null for a message the due-reminder cron sent with no human behind it.
   sentById    String?
-  sentBy      User?     @relation(fields: [sentById], references: [id])
+  sentBy      User?      @relation(fields: [sentById], references: [id])
 
-  channel     NotificationChannel
-  purpose     MessagePurpose
+  channel   NotificationChannel
+  purpose   MessagePurpose
   /// The address or number actually dialled/mailed, captured as sent rather
   /// than re-read off the lead/customer later, which may have since changed.
-  recipient   String
+  recipient String
   /// Email subject, or the WhatsApp template name for a template message.
-  subject     String?
+  subject   String?
 
   status            MessageDeliveryStatus @default(QUEUED)
   providerMessageId String?
@@ -808,27 +810,27 @@ model AuditLog {
 }
 
 model File {
-  id                 String       @id @default(cuid())
-  fileName           String
-  filePath           String
-  mimeType           String
-  sizeBytes          Int
-  category           FileCategory @default(ATTACHMENT)
-  relatedLeadId      String?
-  relatedLead        Lead?        @relation(fields: [relatedLeadId], references: [id], onDelete: Cascade)
-  relatedCustomerId  String?
-  relatedCustomer    Customer?    @relation(fields: [relatedCustomerId], references: [id], onDelete: Cascade)
-  relatedQuotationId String?
-  relatedQuotation   Quotation?   @relation(fields: [relatedQuotationId], references: [id], onDelete: Cascade)
+  id                       String           @id @default(cuid())
+  fileName                 String
+  filePath                 String
+  mimeType                 String
+  sizeBytes                Int
+  category                 FileCategory     @default(ATTACHMENT)
+  relatedLeadId            String?
+  relatedLead              Lead?            @relation(fields: [relatedLeadId], references: [id], onDelete: Cascade)
+  relatedCustomerId        String?
+  relatedCustomer          Customer?        @relation(fields: [relatedCustomerId], references: [id], onDelete: Cascade)
+  relatedQuotationId       String?
+  relatedQuotation         Quotation?       @relation(fields: [relatedQuotationId], references: [id], onDelete: Cascade)
   // The scanned supplier invoice this record was created from.
   relatedPurchaseInvoiceId String?
   relatedPurchaseInvoice   PurchaseInvoice? @relation(fields: [relatedPurchaseInvoiceId], references: [id], onDelete: Cascade)
   // A photo taken at a field visit (shop front, crop, site).
-  relatedFieldVisitId String?
-  relatedFieldVisit   FieldVisit? @relation(fields: [relatedFieldVisitId], references: [id], onDelete: Cascade)
-  uploadedById       String
-  uploadedBy         User         @relation(fields: [uploadedById], references: [id])
-  createdAt          DateTime     @default(now())
+  relatedFieldVisitId      String?
+  relatedFieldVisit        FieldVisit?      @relation(fields: [relatedFieldVisitId], references: [id], onDelete: Cascade)
+  uploadedById             String
+  uploadedBy               User             @relation(fields: [uploadedById], references: [id])
+  createdAt                DateTime         @default(now())
 
   @@index([relatedQuotationId])
   @@index([relatedLeadId])
@@ -907,23 +909,23 @@ model Supplier {
 }
 
 model PurchaseInvoice {
-  id            String   @id @default(cuid())
+  id            String                @id @default(cuid())
   /// The supplier's own invoice number, not ours — so it is unique per
   /// supplier rather than globally. Two suppliers may both issue "INV-001".
   invoiceNumber String
   supplierId    String
-  supplier      Supplier @relation(fields: [supplierId], references: [id])
+  supplier      Supplier              @relation(fields: [supplierId], references: [id])
   invoiceDate   DateTime
-  subtotal      Decimal  @default(0) @db.Decimal(14, 2)
-  taxAmount     Decimal  @default(0) @db.Decimal(14, 2)
-  totalAmount   Decimal  @db.Decimal(14, 2)
+  subtotal      Decimal               @default(0) @db.Decimal(14, 2)
+  taxAmount     Decimal               @default(0) @db.Decimal(14, 2)
+  totalAmount   Decimal               @db.Decimal(14, 2)
   notes         String?
   items         PurchaseInvoiceItem[]
   files         File[]
   createdById   String
-  createdBy     User     @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdBy     User                  @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
 
   /// Re-entering the same invoice for the same supplier is a mistake, and
   /// the likeliest one when invoices are captured by photographing them.
@@ -947,4 +949,352 @@ model PurchaseInvoiceItem {
   lineTotal   Decimal         @db.Decimal(14, 2)
 
   @@index([invoiceId])
+}
+
+// ============================================================
+// ACCOUNTING — double-entry foundation (Phase 1)
+//
+// Design rule for everything below: a financial document is a business
+// record, and posting is a separate, centralized step that emits a balanced
+// JournalEntry. Documents never write GL rows themselves and never store a
+// balance — every balance is derived from posted JournalLines. See
+// src/lib/accounting/posting.ts, the only module permitted to write here.
+//
+// Deliberately NOT multi-tenant at the ledger level. Company scopes the
+// things that genuinely belong to a legal entity (periods, numbering), but
+// LedgerAccount and JournalEntry are not company-scoped: Urvar is one Pvt
+// Ltd, and threading a tenant key through every posting call to support a
+// second entity that does not exist would cost more than it saves.
+// ============================================================
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+/// Which side increases this account. Stored rather than derived from `type`
+/// so a contra account — Sales Returns is an INCOME account that normally
+/// carries a debit — is representable without a special case.
+enum NormalBalance {
+  DEBIT
+  CREDIT
+}
+
+enum FinancialPeriodStatus {
+  /// Accepts postings.
+  OPEN
+  /// No new postings. Reopenable by SUPER_ADMIN.
+  CLOSED
+  /// Permanently sealed — returns filed against it. Never reopenable.
+  LOCKED
+}
+
+enum JournalSourceType {
+  MANUAL
+  SALES_INVOICE
+  RECEIPT
+  CREDIT_NOTE
+  DEBIT_NOTE
+  SUPPLIER_BILL
+  SUPPLIER_PAYMENT
+  EXPENSE
+  STOCK_MOVEMENT
+  OPENING_BALANCE
+  REVERSAL
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
+/// Subledger attribution for an AR/AP line. Not an FK because the party may
+/// live in either the Customer or the Supplier table.
+enum PartyType {
+  CUSTOMER
+  SUPPLIER
+}
+
+enum TaxTreatment {
+  TAXABLE
+  NIL_RATED
+  EXEMPT
+  /// Exports and SEZ supplies.
+  ZERO_RATED
+  NON_GST
+}
+
+/// The selling legal entity. One row in practice, but a table rather than
+/// constants so the GSTIN, address and bank details printed on a tax invoice
+/// come from data an admin can correct — not from a string literal baked
+/// into a PDF template, which is where the current quotation PDF keeps them.
+model Company {
+  id        String  @id @default(cuid())
+  legalName String
+  tradeName String?
+  gstin     String?
+  pan       String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  /// Origin state for place-of-supply comparison. An invoice is intra-state
+  /// (CGST+SGST) when this equals the customer's place of supply, and
+  /// inter-state (IGST) otherwise.
+  state        String
+  /// GST numeric state code, e.g. "19" for West Bengal.
+  stateCode    String?
+  pincode      String?
+
+  phone String?
+  email String?
+
+  bankName      String?
+  bankAccountNo String?
+  bankIfsc      String?
+  bankBranch    String?
+
+  /// Financial year start month, 1-12. India is 4 (April). Configurable
+  /// rather than assumed, but defaulted so nothing has to set it.
+  fyStartMonth Int     @default(4)
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  financialPeriods FinancialPeriod[]
+  documentSeries   DocumentSeries[]
+}
+
+/// A node in the chart of accounts.
+model LedgerAccount {
+  id String @id @default(cuid())
+
+  /// Stable, human-meaningful identifier used in reports and referenced by
+  /// AccountMapping. Immutable once postings exist against the account.
+  code String @unique
+  name String
+
+  type          LedgerAccountType
+  normalBalance NormalBalance
+
+  parentId String?
+  parent   LedgerAccount?  @relation("AccountTree", fields: [parentId], references: [id])
+  children LedgerAccount[] @relation("AccountTree")
+
+  /// Only leaf accounts may carry postings. A parent exists to group and
+  /// subtotal its children; posting directly to it would double-count in
+  /// every rolled-up report.
+  isPostable Boolean @default(true)
+
+  /// Created by the chart-of-accounts seed and resolved by AccountMapping.
+  /// May be renamed, never deleted or deactivated — the posting service
+  /// depends on it existing.
+  isSystem Boolean @default(false)
+
+  isActive    Boolean @default(true)
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines    JournalLine[]
+  mappings AccountMapping[]
+
+  @@index([type])
+  @@index([parentId])
+  @@index([isActive])
+}
+
+/// One month of one financial year. An Indian FY runs 1 April - 31 March.
+model FinancialPeriod {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  /// The FY's starting calendar year: FY 2026-27 is stored as 2026.
+  financialYear Int
+
+  /// 1-12 where 1 = April, so ordering by this is chronological within the
+  /// financial year rather than the calendar year.
+  periodNumber Int
+
+  /// Display label, e.g. "Apr 2026".
+  label     String
+  startDate DateTime
+  endDate   DateTime
+
+  status     FinancialPeriodStatus @default(OPEN)
+  closedAt   DateTime?
+  closedById String?
+  closedBy   User?                 @relation("PeriodCloser", fields: [closedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries JournalEntry[]
+
+  @@unique([companyId, financialYear, periodNumber])
+  @@index([startDate, endDate])
+  @@index([status])
+}
+
+/// A balanced set of debits and credits. Immutable once POSTED: a mistake is
+/// corrected by a linked reversing entry, never by editing these rows.
+model JournalEntry {
+  id          String   @id @default(cuid())
+  entryNumber String   @unique
+  entryDate   DateTime
+
+  periodId String
+  period   FinancialPeriod @relation(fields: [periodId], references: [id])
+
+  narration String
+  status    JournalEntryStatus @default(POSTED)
+
+  sourceType JournalSourceType
+  /// The business document this was generated from. Null for MANUAL entries.
+  /// Not an FK — the source may be any of several tables.
+  sourceId   String?
+
+  /// Unique per logical posting, so a retried Server Action, a double submit
+  /// or a replayed webhook cannot post the same document twice. Composed by
+  /// the caller as sourceType:sourceId:revision.
+  idempotencyKey String @unique
+
+  /// Set on a reversing entry, pointing at what it reverses. One-to-one:
+  /// an entry may be reversed only once.
+  reversesEntryId String?       @unique
+  reverses        JournalEntry? @relation("EntryReversal", fields: [reversesEntryId], references: [id])
+  reversedBy      JournalEntry? @relation("EntryReversal")
+
+  postedById String
+  postedBy   User     @relation("JournalPoster", fields: [postedById], references: [id])
+  postedAt   DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@index([entryDate])
+  @@index([periodId])
+  @@index([sourceType, sourceId])
+  @@index([status])
+}
+
+/// One side of one entry. Exactly one of debit/credit is non-zero, and both
+/// are non-negative — a negative amount is never used to mean "the other
+/// side", because it would break every SUM-based report.
+model JournalLine {
+  id      String       @id @default(cuid())
+  entryId String
+  entry   JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  /// Position within the entry, so a ledger prints lines in the order they
+  /// were written rather than by cuid.
+  lineNumber Int
+
+  accountId String
+  account   LedgerAccount @relation(fields: [accountId], references: [id])
+
+  debit  Decimal @default(0) @db.Decimal(16, 2)
+  credit Decimal @default(0) @db.Decimal(16, 2)
+
+  narration String?
+
+  partyType PartyType?
+  partyId   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([entryId])
+  @@index([accountId])
+  @@index([partyType, partyId])
+}
+
+/// Named links from a posting role to a real account, so no account id or
+/// code is ever hardcoded at a call site. Seeded alongside the chart of
+/// accounts and validated at boot; a missing mapping fails loudly rather
+/// than silently posting somewhere plausible.
+model AccountMapping {
+  id String @id @default(cuid())
+
+  /// e.g. AR_TRADE, SALES_REVENUE, GST_OUTPUT_CGST, ROUND_OFF.
+  key String @unique
+
+  accountId String
+  account   LedgerAccount @relation(fields: [accountId], references: [id])
+
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Gapless, per-financial-year document numbering.
+///
+/// Replaces the COUNT(*)+1 scheme in src/lib/id-sequences.ts for financial
+/// documents. GST Rule 46(b) requires a consecutive serial number unique
+/// within a financial year; a row count is neither gapless nor per-FY, and
+/// races under concurrency. nextNumber is incremented under a row lock
+/// inside the same transaction that inserts the document.
+model DocumentSeries {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  /// SALES_INVOICE, RECEIPT, CREDIT_NOTE, JOURNAL, ...
+  documentType  String
+  financialYear Int
+
+  prefix  String
+  /// Zero-padding width of the numeric part.
+  padding Int    @default(4)
+
+  nextNumber Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, documentType, financialYear])
+}
+
+/// GST rate master, keyed by HSN.
+///
+/// Rates are data, never literals in code: Urvar's accountant owns these
+/// values and organic-manure classification is rate-sensitive. The
+/// effectiveFrom/To window keeps a historical invoice re-derivable after a
+/// rate change.
+model TaxRate {
+  id          String  @id @default(cuid())
+  hsnCode     String
+  description String?
+
+  treatment TaxTreatment @default(TAXABLE)
+
+  /// Total GST percent. CGST/SGST is always half each and IGST is the full
+  /// rate, so storing one number keeps intra- and inter-state consistent by
+  /// construction rather than by three columns that can drift apart.
+  ratePercent Decimal @db.Decimal(5, 2)
+  cessPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  /// False until a tax professional has signed the classification off. The
+  /// tax engine refuses to price an invoice from an unverified row, so the
+  /// system cannot quietly invent a rate — see the brief's rule that GST
+  /// treatment is never assumed.
+  isVerified   Boolean @default(false)
+  verifiedNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([hsnCode, effectiveFrom])
+  @@index([isVerified])
 }

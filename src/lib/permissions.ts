@@ -27,19 +27,36 @@ export type Module =
   | "field_visits"
   | "reports"
   | "users"
-  | "audit";
+  | "audit"
+  // Accounting (Phase 1+). `accounting` is the ledger itself — chart of
+  // accounts, journal entries, financial periods. The other three are the
+  // documents that post into it.
+  | "accounting"
+  | "invoices"
+  | "payments"
+  | "gst";
 
-export type Action = "read" | "write" | "delete";
+/**
+ * `approve` exists for separation of duties on financial documents: the right
+ * to create a payment and the right to release it are different rights. It is
+ * "none" on every non-financial module, which is deliberate rather than
+ * lazy — those modules have no approval step to gate.
+ *
+ * Holding the scope is only half of it. Whether a user may approve a document
+ * they themselves created is a separate runtime question — see
+ * `canSelfApprove()` below.
+ */
+export type Action = "read" | "write" | "delete" | "approve";
 export type Scope = "none" | "own" | "territory" | "all";
 
 type ModulePerms = Record<Action, Scope>;
 type RolePerms = Record<Module, ModulePerms>;
 
-const FULL: ModulePerms = { read: "all", write: "all", delete: "all" };
-const READ_ALL: ModulePerms = { read: "all", write: "none", delete: "none" };
-const OWN_RW: ModulePerms = { read: "own", write: "own", delete: "none" };
-const TERRITORY_R: ModulePerms = { read: "territory", write: "none", delete: "none" };
-const NONE: ModulePerms = { read: "none", write: "none", delete: "none" };
+const FULL: ModulePerms = { read: "all", write: "all", delete: "all", approve: "all" };
+const READ_ALL: ModulePerms = { read: "all", write: "none", delete: "none", approve: "none" };
+const OWN_RW: ModulePerms = { read: "own", write: "own", delete: "none", approve: "none" };
+const TERRITORY_R: ModulePerms = { read: "territory", write: "none", delete: "none", approve: "none" };
+const NONE: ModulePerms = { read: "none", write: "none", delete: "none", approve: "none" };
 
 export const PERMISSIONS: Record<Role, RolePerms> = {
   SUPER_ADMIN: {
@@ -57,28 +74,42 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     reports: READ_ALL,
     users: FULL,
     audit: READ_ALL,
+    // Accounting. Note `delete` is "none" even for SUPER_ADMIN: a posted
+    // journal entry is corrected by a linked reversing entry, never removed.
+    // That is stricter than this file's usual "delete is Super Admin only"
+    // rule, and is the one place the rule is tightened rather than relaxed.
+    accounting: { read: "all", write: "all", delete: "none", approve: "all" },
+    invoices: { read: "all", write: "all", delete: "none", approve: "all" },
+    payments: { read: "all", write: "all", delete: "none", approve: "all" },
+    gst: { read: "all", write: "all", delete: "none", approve: "all" },
   },
   SALES_MANAGER: {
     // Delete is Super Admin only, across every module — removing a record is
     // the one action no sales role gets, however senior.
-    leads: { read: "all", write: "all", delete: "none" },
-    pipeline: { read: "all", write: "all", delete: "none" },
-    calls: { read: "all", write: "all", delete: "none" },
-    ai_calls: { read: "all", write: "all", delete: "none" },
-    followups: { read: "all", write: "all", delete: "none" },
-    tasks: { read: "all", write: "all", delete: "none" },
-    customers: { read: "all", write: "all", delete: "none" },
-    quotations: { read: "all", write: "all", delete: "none" },
-    products: { read: "all", write: "all", delete: "none" },
+    leads: { read: "all", write: "all", delete: "none", approve: "none" },
+    pipeline: { read: "all", write: "all", delete: "none", approve: "none" },
+    calls: { read: "all", write: "all", delete: "none", approve: "none" },
+    ai_calls: { read: "all", write: "all", delete: "none", approve: "none" },
+    followups: { read: "all", write: "all", delete: "none", approve: "none" },
+    tasks: { read: "all", write: "all", delete: "none", approve: "none" },
+    customers: { read: "all", write: "all", delete: "none", approve: "none" },
+    quotations: { read: "all", write: "all", delete: "none", approve: "none" },
+    products: { read: "all", write: "all", delete: "none", approve: "none" },
     // Supplier prices reveal margin: a sales role that can see both the
     // purchase price and the quoted price knows the markup on every deal.
     purchases: NONE,
     // Reads every rep's visits — the point of check-ins is oversight — but
     // cannot delete one, so the record of who was where cannot be rewritten.
-    field_visits: { read: "all", write: "all", delete: "none" },
+    field_visits: { read: "all", write: "all", delete: "none", approve: "none" },
     reports: READ_ALL,
     users: NONE,
     audit: NONE,
+    // Sees what was invoiced and what came in — that is sales oversight — but
+    // cannot raise a document or release a payment.
+    accounting: NONE,
+    invoices: { read: "all", write: "none", delete: "none", approve: "none" },
+    payments: { read: "all", write: "none", delete: "none", approve: "none" },
+    gst: NONE,
   },
   SALES_EXECUTIVE: {
     leads: OWN_RW,
@@ -92,26 +123,36 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     products: READ_ALL,
     purchases: NONE,
     field_visits: OWN_RW,
-    reports: { read: "own", write: "none", delete: "none" },
+    reports: { read: "own", write: "none", delete: "none", approve: "none" },
     users: NONE,
     audit: NONE,
+    // Their own deals only, read-only: enough to answer "has this customer
+    // paid?" on a call without exposing the books.
+    accounting: NONE,
+    invoices: { read: "own", write: "none", delete: "none", approve: "none" },
+    payments: { read: "own", write: "none", delete: "none", approve: "none" },
+    gst: NONE,
   },
   DISTRIBUTOR_MANAGER: {
     leads: TERRITORY_R,
     pipeline: TERRITORY_R,
-    calls: { read: "own", write: "own", delete: "none" },
+    calls: { read: "own", write: "own", delete: "none", approve: "none" },
     ai_calls: NONE,
-    followups: { read: "own", write: "own", delete: "none" },
-    tasks: { read: "own", write: "own", delete: "none" },
+    followups: { read: "own", write: "own", delete: "none", approve: "none" },
+    tasks: { read: "own", write: "own", delete: "none", approve: "none" },
     // Distributor/dealer customers within territory
-    customers: { read: "territory", write: "territory", delete: "none" },
+    customers: { read: "territory", write: "territory", delete: "none", approve: "none" },
     quotations: TERRITORY_R,
     products: READ_ALL,
     purchases: NONE,
-    field_visits: { read: "own", write: "own", delete: "none" },
+    field_visits: { read: "own", write: "own", delete: "none", approve: "none" },
     reports: TERRITORY_R,
     users: NONE,
     audit: NONE,
+    accounting: NONE,
+    invoices: TERRITORY_R,
+    payments: TERRITORY_R,
+    gst: NONE,
   },
   ACCOUNTS_TEAM: {
     leads: READ_ALL,
@@ -120,17 +161,24 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     ai_calls: READ_ALL,
     followups: READ_ALL,
     tasks: READ_ALL,
-    customers: { read: "all", write: "all", delete: "none" }, // financial fields
-    quotations: { read: "all", write: "all", delete: "none" }, // status/payment
+    customers: { read: "all", write: "all", delete: "none", approve: "none" }, // financial fields
+    quotations: { read: "all", write: "all", delete: "none", approve: "none" }, // status/payment
     products: READ_ALL,
     // Procurement is finance's job — deleting an invoice is not, so no delete.
-    purchases: { read: "all", write: "all", delete: "none" },
+    purchases: { read: "all", write: "all", delete: "none", approve: "none" },
     // Field visits are a sales-supervision record with nothing financial in
     // them; accounts has no reason to see which rep stood where.
     field_visits: NONE,
     reports: READ_ALL,
     users: NONE,
     audit: NONE,
+    // Finance's own modules. `approve` is granted at role level; whether a
+    // given user may approve a document they created is enforced separately
+    // by canSelfApprove().
+    accounting: { read: "all", write: "all", delete: "none", approve: "all" },
+    invoices: { read: "all", write: "all", delete: "none", approve: "all" },
+    payments: { read: "all", write: "all", delete: "none", approve: "all" },
+    gst: { read: "all", write: "all", delete: "none", approve: "all" },
   },
 };
 
@@ -147,6 +195,39 @@ export function assertCan(role: Role, module: Module, action: Action): Scope {
   const scope = can(role, module, action);
   if (scope === "none") {
     throw new Error(`Forbidden: ${role} cannot ${action} ${module}`);
+  }
+  return scope;
+}
+
+/**
+ * Separation of duties: may `approverId` approve a document created by
+ * `createdById`?
+ *
+ * Holding `approve` scope is necessary but not sufficient. The control that
+ * actually matters on a payment is that the person who raised it is not the
+ * person who releases it — a role check alone cannot express that, because it
+ * is a fact about the specific document, not about the role.
+ *
+ * SUPER_ADMIN is exempt: on a five-person company there has to be someone who
+ * can unblock a stuck document, and pretending otherwise just means the
+ * control gets worked around by sharing a login. The exemption is logged like
+ * any other approval, so it is visible rather than silent.
+ */
+export function canSelfApprove(role: Role): boolean {
+  return role === "SUPER_ADMIN";
+}
+
+export function assertCanApprove(
+  role: Role,
+  module: Module,
+  approverId: string,
+  createdById: string,
+): Scope {
+  const scope = assertCan(role, module, "approve");
+  if (approverId === createdById && !canSelfApprove(role)) {
+    throw new Error(
+      "You cannot approve a document you created. Ask someone else to approve it.",
+    );
   }
   return scope;
 }

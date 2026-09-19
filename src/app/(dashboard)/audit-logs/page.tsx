@@ -14,7 +14,23 @@ import {
 } from "@/components/ui/table";
 import { AuditLogFilters } from "./audit-log-filters";
 
-const ENTITY_TYPES = ["Lead", "Customer", "Product", "Quotation", "Call", "FollowUp", "Task", "User"];
+// Kept in step with what the app actually writes. PurchaseInvoice and
+// FieldVisit were already being logged and were missing here, so those rows
+// existed in the table but could not be filtered to.
+const ENTITY_TYPES = [
+  "Lead",
+  "Customer",
+  "Product",
+  "Quotation",
+  "Call",
+  "FollowUp",
+  "Task",
+  "User",
+  "PurchaseInvoice",
+  "FieldVisit",
+  "JournalEntry",
+  "FinancialPeriod",
+];
 const ACTIONS = [
   "CREATE",
   "UPDATE",
@@ -26,6 +42,15 @@ const ACTIONS = [
   "RESCHEDULE",
   "ACTIVATE",
   "DEACTIVATE",
+  "DELETE",
+  "CHECK_IN",
+  "CHECK_OUT",
+  "POST",
+  "REVERSE",
+  "CLOSE_PERIOD",
+  "REOPEN_PERIOD",
+  "LOCK_PERIOD",
+  "OPEN_FINANCIAL_YEAR",
 ];
 
 export default async function AuditLogsPage({

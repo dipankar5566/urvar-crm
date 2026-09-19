@@ -87,12 +87,47 @@ const USERS = [
 ];
 const PASSWORD = "Urvar@123";
 
+/**
+ * Refuses to run against a database that has real posted accounting data.
+ *
+ * This script wipes the CRM to rebuild demo data. Once the ledger is live that
+ * is no longer a development convenience, it is data loss — and DATABASE_URL
+ * on this box points at production. `--force` exists for the case where you
+ * genuinely mean it.
+ */
+async function assertSafeToWipe() {
+  const posted = await prisma.journalEntry.count();
+  if (posted > 0 && !process.argv.includes("--force")) {
+    throw new Error(
+      `Refusing to seed: ${posted} journal entries exist. This script wipes CRM data ` +
+        `and would destroy them. Pass --force only if you are certain.`,
+    );
+  }
+}
+
 async function main() {
+  await assertSafeToWipe();
   console.log("Clearing existing data…");
   // Delete in FK-safe order.
+  // Ledger first: JournalEntry.postedById references User, so the user wipe
+  // below fails once anything has been posted. The accounting *structure*
+  // (chart of accounts, mappings, periods, company) is deliberately NOT wiped
+  // — it is installed by scripts/seed-accounting.ts against real data, not
+  // demo data, and re-creating it here would make a demo reset silently
+  // destroy production configuration.
+  await prisma.journalLine.deleteMany();
+  await prisma.journalEntry.deleteMany();
+
   await prisma.auditLog.deleteMany();
   await prisma.notification.deleteMany();
+  // These five postdate the original wipe list and were being left behind as
+  // orphans on every reseed.
+  await prisma.messageLog.deleteMany();
   await prisma.file.deleteMany();
+  await prisma.fieldVisit.deleteMany();
+  await prisma.purchaseInvoiceItem.deleteMany();
+  await prisma.purchaseInvoice.deleteMany();
+  await prisma.supplier.deleteMany();
   await prisma.quotationItem.deleteMany();
   await prisma.order.deleteMany();
   await prisma.quotation.deleteMany();
