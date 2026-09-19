@@ -92,30 +92,114 @@ export function languageName(code: SarvamTtsLanguage): string {
  * machine translations nobody on the team can check. A wrong-sounding word
  * in someone's own language is worse than a neutral English one.
  */
-const PHRASES: Partial<Record<SarvamTtsLanguage, { fillers: string[]; closing: string }>> = {
-  // Several fillers per language, because hearing the identical word before
-  // every single reply is itself robotic — people vary their acknowledgements.
-  "bn-IN": { fillers: ["জি...", "আচ্ছা...", "হ্যাঁ...", "ঠিক আছে..."], closing: "ধন্যবাদ, ভালো থাকবেন।" },
-  "hi-IN": { fillers: ["जी...", "अच्छा...", "हाँ जी...", "ठीक है..."], closing: "धन्यवाद, नमस्ते।" },
-  "en-IN": { fillers: ["Sure...", "Okay...", "Right...", "Got it..."], closing: "Thank you, have a good day." },
+const PHRASES: Partial<
+  Record<
+    SarvamTtsLanguage,
+    { fillers: string[]; closing: string; holding: string; fallback: string }
+  >
+> = {
+  // Eight fillers per language, not four. Measured across the 766 spoken
+  // utterances in logs/voice-agent-out-4.log: 203 of them (26.5%) were fillers
+  // drawn from a four-word list, and 32 immediately repeated the one before.
+  // Hearing the same handful of words open every reply is itself the robotic
+  // thing the filler exists to avoid.
+  "bn-IN": {
+    fillers: [
+      "জি...",
+      "আচ্ছা...",
+      "হ্যাঁ...",
+      "ঠিক আছে...",
+      "বুঝলাম...",
+      "শুনছি...",
+      "আচ্ছা আচ্ছা...",
+      "হ্যাঁ হ্যাঁ...",
+    ],
+    closing: "ধন্যবাদ, ভালো থাকবেন।",
+    holding: "একটু ধরুন, দেখে নিচ্ছি।",
+    fallback: "দুঃখিত, আমাদের একজন আপনাকে ফোন করে জানাবেন।",
+  },
+  "hi-IN": {
+    fillers: [
+      "जी...",
+      "अच्छा...",
+      "हाँ जी...",
+      "ठीक है...",
+      "समझ गया...",
+      "सुन रहा हूँ...",
+      "अच्छा अच्छा...",
+      "जी हाँ...",
+    ],
+    closing: "धन्यवाद, नमस्ते।",
+    holding: "एक मिनट, मैं देख रहा हूँ।",
+    fallback: "माफ़ कीजिए, हमारी टीम से कोई आपको कॉल करेगा।",
+  },
+  "en-IN": {
+    fillers: [
+      "Sure...",
+      "Okay...",
+      "Right...",
+      "Got it...",
+      "I see...",
+      "Understood...",
+      "Yes...",
+      "Okay okay...",
+    ],
+    closing: "Thank you, have a good day.",
+    holding: "One moment, let me check that.",
+    fallback: "Sorry, let me have someone call you back.",
+  },
 };
 
 const FALLBACK_PHRASES = PHRASES["en-IN"]!;
 
 /**
  * Spoken the instant a turn starts if the model is still thinking, so the
- * lead hears a response rather than a gap. `index` is the turn counter —
- * pass it so successive turns cycle through the variants rather than
- * repeating one word.
+ * lead hears a response rather than a gap.
+ *
+ * `index` must advance once per *filler*, not once per utterance. It used to
+ * be handed session.utteranceSeq, which every streamed sentence, closing line
+ * and holding line also bumps — so the documented cycle never actually
+ * happened and one word came up 47 times in a single log. `previous` is the
+ * last filler this call spoke; the pick steps past it so the same word is
+ * never said twice running.
  */
-export function fillerWord(code: SarvamTtsLanguage, index = 0): string {
+export function fillerWord(
+  code: SarvamTtsLanguage,
+  index = 0,
+  previous?: string | null,
+): string {
   const { fillers } = PHRASES[code] ?? FALLBACK_PHRASES;
-  return fillers[Math.abs(index) % fillers.length];
+  const start = Math.abs(index) % fillers.length;
+  const pick = fillers[start]!;
+  if (pick !== previous || fillers.length === 1) return pick;
+  return fillers[(start + 1) % fillers.length]!;
 }
 
 /** Spoken by the server's own wrap-up guards before hanging up. */
 export function closingLine(code: SarvamTtsLanguage): string {
   return (PHRASES[code] ?? FALLBACK_PHRASES).closing;
+}
+
+/**
+ * Spoken when a turn stalls — a slow tool hop, or a model error — so the lead
+ * hears something rather than dead air.
+ *
+ * Exists because this line was a hardcoded Hindi string in server.ts, spoken
+ * verbatim on every call in every language: a West Bengal lead mid-way through
+ * a Bengali conversation would suddenly hear "Sorry, ek minute. Main check kar
+ * raha hoon."
+ */
+export function holdingLine(code: SarvamTtsLanguage): string {
+  return (PHRASES[code] ?? FALLBACK_PHRASES).holding;
+}
+
+/**
+ * Spoken when the agent runs out of tool hops without producing a reply of its
+ * own. Same reason as holdingLine: this was a hardcoded English sentence in
+ * openai-agent.ts, read aloud mid-way through a Bengali call.
+ */
+export function fallbackLine(code: SarvamTtsLanguage): string {
+  return (PHRASES[code] ?? FALLBACK_PHRASES).fallback;
 }
 
 /** Which rule decided the voice — reported in the log so a surprising

@@ -100,15 +100,57 @@ Non-farmer segment, same register:
 
 Not American call-centre English.
 
+### Script
+
+Write the language in its own script. This is not a style preference: Sarvam's
+bulbul pronounces the letters it is given, so a Bengali sentence spelled in
+Latin letters is read with the wrong phonology and comes out sounding like
+badly-accented Hindi. That is exactly what "sometimes it sounds like Hindi
+Bengali, very robotic and inhuman" turned out to be when it was reported on
+2026-09-19.
+
+It is intermittent and self-sustaining. Language resolution was correct on
+every call that day, and the Bengali-script versus Latin-script utterance
+counts on the four bn-IN calls ran 21/0, 45/0, 1/0 and then 7/24 — once one
+turn drifts, the romanized history keeps the next one romanized.
+
+Two defences. The prompt names the script, and no longer demonstrates
+romanization in its own examples (it used to offer "achha", "thik ache",
+"hnji, aur?" as models to imitate, which was supplying the very thing it now
+forbids). Behind that, `pipeline/script-guard.ts` converts a Latin-only
+sentence through Sarvam's transliterate endpoint and writes the corrected text
+into the conversation history.
+
+The guard runs alongside the speech, not in front of it. The conversion costs
+524-875 ms per sentence, which is too much to make someone wait for mid-turn,
+so the sentence is spoken as the model wrote it and the history is corrected a
+moment later. One turn can still be heard romanized; what it can no longer do
+is stay that way, because the romanized history was what kept the next turn
+romanized.
+
+The guard deliberately leaves a genuine English sentence alone, by counting
+English function words: the agent is told to follow a lead into English, and
+the voice only switches after two agreeing detections, so there is a window
+where the call language is still Bengali and an English reply is correct.
+
+English nouns people actually say out loud stay in Latin inside a
+native-script sentence. That is ordinary speech here, and it is not what the
+rule is about.
+
 ### Code-switching
 
 Leads mix languages within a sentence, and the agent should follow rather than
 correct. "Sir, আপনার monthly requirement roughly কত?" is ordinary speech here.
 
 **Open caveat.** The prompt tells the model to switch language when the lead
-does, but the TTS voice is fixed for the whole call — so a Hindi reply is read
-by a Bengali voice. Whether that actually sounds wrong has not been tested. See
-`VOICE_TEST_PLAN.md`; do not change the code until someone has listened.
+does, and the voice now follows — but only once, and only after two agreeing
+`/text-lid` detections on finals of 20 characters or more at STT confidence
+0.7 or better (`pipeline/detect-language.ts`, `switchVoiceLanguage` in
+`server.ts`). Short answers never clear those gates, so a reply in the new
+language can still be read by the old voice for a few turns. Whether that
+actually sounds wrong has not been tested by ear. See `VOICE_TEST_PLAN.md`;
+do not loosen the gates until someone has listened — they exist because
+auto-detection previously relanguaged two real leads off one mis-heard word.
 
 ## Pacing, pauses and fillers
 
@@ -117,10 +159,34 @@ loudness**. Pacing comes from `pace`, punctuation and sentence length — there
 is no way to insert a timed pause, so do not design around one.
 
 A filler word ("আচ্ছা...", "जी...", "Right...") is spoken automatically if the
-model has produced nothing 400 ms into a turn, cycling through variants so the
-same word does not open every reply. It fired on about a third of turns at
-baseline. It is a latency cover, not a personality trait: if it starts firing
-on most turns, fix the latency rather than adding more fillers.
+model has produced nothing 600 ms into a turn.
+
+That was 400 ms, and the cycle through variants did not work. Measured across
+the 766 spoken utterances in `logs/voice-agent-out-4.log` on 2026-09-19:
+
+| Measure | Baseline |
+|---|---|
+| Fillers | 203 of 766 utterances (26.5%) |
+| Bengali pool | 4 words, used 47 / 45 / 41 / 41 times |
+| Immediately repeating the previous filler | 32 |
+| Filler followed at once by the model saying it again | 44 |
+
+Three causes, all now fixed. `fillerWord()` was indexed by
+`session.utteranceSeq`, which every streamed sentence, closing line and holding
+line also bumps, so successive fillers never stepped through the list; it takes
+`session.fillerSeq` now, plus the previous word, and steps past it. The pools
+went from four entries to eight. And 400 ms sits inside the model's own normal
+350-450 ms time to first sentence, so the cover was firing on turns that were
+not slow.
+
+The fourth problem was the collision with the model's own opening reaction,
+which this document asks for two sections up: "হ্যাঁ..." then "হ্যাঁ দাদা, আসলে...".
+`stripLeadingAcknowledgement()` in `pipeline/backchannel.ts` drops the
+duplicate, on a turn's first sentence only and only when a filler actually
+played. The reaction is worth keeping; hearing it twice is not.
+
+It remains a latency cover, not a personality trait: if it starts firing on
+most turns, fix the latency rather than adding more fillers.
 
 TTS is chunked by **sentence**, never by clause. An earlier version split at
 commas to start speaking sooner; every fragment then got its own sentence-final

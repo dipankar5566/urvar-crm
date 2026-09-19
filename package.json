@@ -13,6 +13,7 @@
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:clean-demo": "tsx prisma/clean-demo-data.ts",
+    "db:enrich-products": "tsx scripts/enrich-products-from-graph.ts",
     "db:studio": "prisma studio",
     "voice-agent:dev": "tsx watch voice-agent/server.ts",
     "tts:samples": "tsx voice-agent/scripts/tts-samples.ts",

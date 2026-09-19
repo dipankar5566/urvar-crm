@@ -6,16 +6,34 @@ quality audit (`docs/VOICE_QUALITY_AUDIT.md`) — the empty catalogue was the
 single largest cap on sales quality found in that audit, larger than the
 voice or the prompt.
 
-## Current state, as of this writing
+## Current state, as of 2026-09-19
 
 ```
-Product rows: 1
-  URNP0108  Enriched Vermicompost  mrp=0  agronomy fields filled=0/8
+Product rows: 4  (all active, all mrp=0)
+  URNP0108  Enriched Vermicompost          25 kg     dealerPrice 237.50
+  URNP0109  Phosphate Rich Organic Manure  50 kg     dealerPrice 750.00
+  URNP0110  Liquid Humic Acid              1 liter   dealerPrice  90.00
+  URNP0111  Cow Dung Manure [FYM]          25 kg     dealerPrice 175.00
 ```
 
-One product, no usable price, no agronomy detail. **This has not changed
-since the audit.** Nothing below fixes that — it only makes the data fixable
-without a code change.
+Three more products were added on 2026-09-18; the earlier claim of one row is
+why this section now carries a date. What has **not** changed is the part that
+actually limits the AI caller: `mrp` is still `0` on all four, so every one of
+them renders as "price not set, must be confirmed".
+
+`nutrientContent`, `problemSolved` and `description` were filled on
+2026-09-19 from the knowledge graph by `scripts/enrich-products-from-graph.ts`
+(`npm run db:enrich-products`, dry-run by default). `dosage` and
+`applicationMethod` are still empty on all four and are not in the graph —
+they need an agronomist, and they are the largest remaining gap in what the
+agent can say. `targetCrops` is deliberately left empty: the graph links 14 to
+40 crops to each product, and per-lead crop matching already happens live in
+`voice-agent/lib/graph-facts.ts`.
+
+One disagreement is recorded but not resolved: the CRM calls Enriched
+Vermicompost and Cow Dung Manure 25 kg packs where the graph says 5 kg. The
+enrichment script reports it and changes nothing, because pack size reaches
+quotations and invoices.
 
 ## The commercial fields (existed before this session)
 

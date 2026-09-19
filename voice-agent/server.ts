@@ -37,10 +37,15 @@ import {
   languageName,
   fillerWord,
   closingLine,
+  holdingLine,
   type SarvamTtsLanguage,
   type TtsLanguageSource,
 } from "./pipeline/tts-language.js";
-import { isBackchannel, classifyInterrupt } from "./pipeline/backchannel.js";
+import {
+  isBackchannel,
+  classifyInterrupt,
+  stripLeadingAcknowledgement,
+} from "./pipeline/backchannel.js";
 import { toSpeakableText } from "./pipeline/voice-output.js";
 import {
   startTurn,
@@ -87,8 +92,15 @@ const SILENCE_HANGUP_MS = 15_000;
 /** Hard ceiling on an AI call; real qualification calls run 90-155s. */
 const MAX_CALL_MS = 5 * 60 * 1000;
 /** If the model hasn't produced a speakable fragment this fast, say a
- * one-word acknowledgement so the lead isn't listening to silence. */
-const FILLER_DELAY_MS = 400;
+ * one-word acknowledgement so the lead isn't listening to silence.
+ *
+ * Was 400ms, which is inside the normal spread of the model's own time to
+ * first sentence (350-450ms in the logs), so the filler was firing on a
+ * quarter of everything the agent said — 203 of 766 utterances. A filler is a
+ * latency cover, not a personality trait (docs/VOICE_PERSONA.md); at that rate
+ * it becomes the personality. 600ms only covers turns that are genuinely
+ * slow. */
+const FILLER_DELAY_MS = 600;
 /** Time allowed for a closing line to play before the line is dropped. */
 const CLOSING_PLAY_MS = 4000;
 
@@ -200,6 +212,14 @@ type CallSession = {
   /** Bumped per utterance so each checkpoint ack maps to its own utterance
    * and a stale ack can't clear a newer one. */
   utteranceSeq: number;
+  /** Bumped once per *filler*, which utteranceSeq is not — every streamed
+   * sentence, closing line and holding line bumps that one too, so handing it
+   * to fillerWord() produced no cycle at all and one word came up 47 times in
+   * a single log. */
+  fillerSeq: number;
+  /** The last filler this call spoke, so the next pick can step past it. 32 of
+   * the 203 logged fillers immediately repeated the one before. */
+  lastFiller: string | null;
   /** Set when a real barge-in happens, so the in-flight streamed reply stops
    * queueing further sentences. */
   cancelTurn: boolean;
@@ -344,6 +364,8 @@ function createSession(
     audioPlayingUntil: 0,
     speechPendingUntil: 0,
     utteranceSeq: 0,
+    fillerSeq: 0,
+    lastFiller: null,
     cancelTurn: false,
     pendingUtterance: null,
     coalesceTimer: null,
@@ -1525,8 +1547,11 @@ async function runNextAgentTurn(
       session.fillerTimer = setTimeout(() => {
         if (spokenAnything || session.cancelTurn || session.endingCall) return;
         session.utteranceSeq += 1;
+        session.fillerSeq += 1;
         metrics.spokeFiller = true;
-        speakWithCheckpoint(session, fillerWord(session.languageCode, session.utteranceSeq));
+        const filler = fillerWord(session.languageCode, session.fillerSeq, session.lastFiller);
+        session.lastFiller = filler;
+        speakWithCheckpoint(session, filler);
       }, FILLER_DELAY_MS);
     }
 
@@ -1542,13 +1567,21 @@ async function runNextAgentTurn(
           clearTimeout(session.fillerTimer);
           session.fillerTimer = null;
         }
+        // The filler and the model's own opening reaction don't know about
+        // each other, so the lead used to hear the acknowledgement twice:
+        // "হ্যাঁ..." then "হ্যাঁ দাদা, ...". 44 turns in the logs did this.
+        // Only the turn's first sentence can collide, and only if a filler
+        // actually played.
+        const spoken =
+          !spokenAnything && metrics.spokeFiller ? stripLeadingAcknowledgement(sentence) : sentence;
         session.utteranceSeq += 1;
         spokenAnything = true;
         if (metrics.firstSentenceAt === null) metrics.firstSentenceAt = Date.now();
-        console.log(`[call ${callId}] speaking sentence: "${sentence.slice(0, 120)}"`);
-        speakWithCheckpoint(session, sentence);
+        console.log(`[call ${callId}] speaking sentence: "${spoken.slice(0, 120)}"`);
+        speakWithCheckpoint(session, spoken);
       },
       () => session.cancelTurn,
+      session.languageCode,
     );
     session.agentHistory = result.history;
     metrics.llmRequestAt = result.timings.requestStartedAt;
@@ -1564,8 +1597,13 @@ async function runNextAgentTurn(
     }
     if (!spokenAnything && result.reply) {
       // Tool-only hops stream no prose; make sure the final text is voiced.
+      // Nothing streamed, so this is the turn's first sentence and carries the
+      // same doubled-acknowledgement risk as the streamed path above.
       session.utteranceSeq += 1;
-      speakWithCheckpoint(session, result.reply);
+      speakWithCheckpoint(
+        session,
+        metrics.spokeFiller ? stripLeadingAcknowledgement(result.reply) : result.reply,
+      );
     } else if (!result.reply) {
       console.log(`[call ${callId}] agent produced no reply text — nothing to speak`);
     }
@@ -1605,7 +1643,10 @@ async function runNextAgentTurn(
     // socket, so a barge-in's discard window can't swallow the one line whose
     // whole job is to prove the call is still alive.
     session.utteranceSeq += 1;
-    speakWithCheckpoint(session, "Sorry, ek minute. Main check kar raha hoon.");
+    // Was a hardcoded Hindi sentence, spoken verbatim on every call in every
+    // language — a West Bengal lead mid-Bengali-conversation heard "Sorry, ek
+    // minute. Main check kar raha hoon."
+    speakWithCheckpoint(session, holdingLine(session.languageCode));
     session.ttsSession?.flush();
   } finally {
     session.agentTurnInFlight = false;

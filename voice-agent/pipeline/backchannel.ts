@@ -51,6 +51,39 @@ export function isBackchannel(text: string): boolean {
 }
 
 /**
+ * Removes a leading acknowledgement the server has already said for itself.
+ *
+ * The filler word and the model's own opening reaction are two separate
+ * features that do not know about each other, and they collide: measured
+ * across logs/voice-agent-out-4.log, 44 turns played a filler and then
+ * immediately said the same thing again —
+ *
+ *   "হ্যাঁ..."  then  "হ্যাঁ দাদা, আসলে organic সার নিয়েই ফোন করেছিলাম।"
+ *
+ * Only the first token goes, and only when real content follows it — the
+ * prompt asks the model to react before it asks anything, and that reaction is
+ * worth keeping. What is not worth keeping is hearing it twice.
+ */
+export function stripLeadingAcknowledgement(text: string): string {
+  // \p{M} for the same reason isBackchannel needs it: without combining marks
+  // in the class "হ্যাঁ" is not one token, and nothing would ever match.
+  // [\s\S] rather than `.` with the `s` flag: tsconfig targets below es2018,
+  // where the dotAll flag is a compile error.
+  const match = /^([\p{L}\p{N}\p{M}]+)[\s,।.!]+([\s\S]+)$/u.exec(text.trim());
+  if (!match) return text;
+
+  const [, first, rest] = match;
+  if (!BACKCHANNEL.has(first!.toLowerCase())) return text;
+
+  // Never strip down to a fragment: a two-word acknowledgement losing its
+  // first word leaves a stray word on its own, which is worse than the
+  // repetition it fixes.
+  const remainder = rest!.trim();
+  if (remainder.length < 4) return text;
+  return remainder;
+}
+
+/**
  * Shortest partial transcript allowed to destroy audio the lead is currently
  * hearing. `isBackchannel` already absorbs "haan" (4), "achha" (5) and
  * "bataiye" (7), so this only has to reject a single noise token; 6 is about

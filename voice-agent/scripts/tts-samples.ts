@@ -89,6 +89,18 @@ const VARIANTS: Variant[] = [
   { file: "10-shubh-warmer", note: "shubh, pace 0.95 + temperature 0.8", preprocessing: true, pace: 0.95, temperature: 0.8 },
   { file: "11-shubh-8khz-phone", note: "8kHz — roughly what the phone network delivers", preprocessing: true, sampleRate: 8000 },
 
+  // --- Script drift. Listen to each r?a/r?b pair back to back: same sentence,
+  // Latin spelling against Bengali script, both through the production bn-IN
+  // voice. The "a" file is what a West Bengal lead actually heard on
+  // 2026-09-19 and called "Hindi-sounding and robotic"; "b" is what the script
+  // guard now produces. Render just these with: npm run tts:samples -- r
+  { file: "r01a-bn-romanized", note: "greeting, ROMANIZED — what the lead actually heard", text: "Namaskar. Ami Urvar Natural theke call korchi.", preprocessing: true },
+  { file: "r01b-bn-native", note: "greeting, Bengali script — the reference for r01a", text: "নমস্কার। আমি Urvar Natural থেকে call করছি।", preprocessing: true },
+  { file: "r02a-bn-romanized", note: "qualifying question, ROMANIZED — what the lead actually heard", text: "Apnar jomir poriman ar ki chash koren sheta ektu bolben?", preprocessing: true },
+  { file: "r02b-bn-native", note: "qualifying question, Bengali script — the reference for r02a", text: "আপনার জমির পরিমাণ আর কী চাষ করেন সেটা একটু বলবেন?", preprocessing: true },
+  { file: "r03a-bn-romanized", note: "recommendation with English nouns, ROMANIZED — what the lead actually heard", text: "Amader team exact rate-ta confirm kore apnake janabe.", preprocessing: true },
+  { file: "r03b-bn-native", note: "recommendation with English nouns, Bengali script — the reference for r03a", text: "আমাদের team exact rate-টা confirm করে আপনাকে জানাবে।", preprocessing: true },
+
   // --- Question intonation. Listen to each q?a/q?b pair back to back. ---
   // Bengali, preprocessing ON — this is exactly what production sends today.
   { file: "q01a-bn-question-prep-on", note: "BN question, preprocessing ON  (production settings)", text: Q_BN, preprocessing: true },
@@ -250,7 +262,9 @@ async function main() {
   const filter = process.argv[2];
   const selected = filter ? VARIANTS.filter((v) => v.file.startsWith(filter)) : VARIANTS;
   if (selected.length === 0) {
-    throw new Error(`No variants match "${filter}". Try "q" for the question set.`);
+    throw new Error(
+      `No variants match "${filter}". Try "q" for the question set, or "r" for the script-drift pairs.`,
+    );
   }
 
   fs.mkdirSync(OUT_DIR, { recursive: true });

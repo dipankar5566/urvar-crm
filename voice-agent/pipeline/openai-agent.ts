@@ -5,11 +5,17 @@
  * holds the conversation logic and none of the provider differences.
  */
 import OpenAI from "openai";
-import type { ChatCompletionChunk, ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import type {
+  ChatCompletionAssistantMessageParam,
+  ChatCompletionChunk,
+  ChatCompletionMessageParam,
+} from "openai/resources/chat/completions";
 import { CRM_TOOLS, executeCrmTool, type ToolContext } from "../tools/crm-tools.js";
 import { completionBody, getProvider, type LlmProvider } from "./llm-provider.js";
 import { CUSTOMER_TYPE_LABELS } from "../../src/lib/constants/labels.js";
 import { EMPTY_GRAPH_FACTS, type GraphFactsBrief } from "../lib/graph-facts.js";
+import { toNativeScript } from "./script-guard.js";
+import { fallbackLine, type SarvamTtsLanguage } from "./tts-language.js";
 
 const MAX_TOOL_HOPS = 4;
 
@@ -72,6 +78,34 @@ export type PriorCallBrief = {
   summary: string | null;
 };
 
+/**
+ * Decides whether a product name coming out of the knowledge graph is one the
+ * CRM actually sells.
+ *
+ * The two catalogues were authored separately and neither spells a product the
+ * same way, so an exact compare is useless: the graph says "PROM — Phosphate
+ * Rich Organic Manure" where the CRM says "Phosphate Rich Organic Manure", and
+ * "Humic Acid — Liquid Bio-Stimulant" where the CRM says "Liquid Humic Acid".
+ * The rule that works on the real data is containment by word: a graph name
+ * counts as stocked when every word of some CRM product's name appears in it.
+ *
+ * Checked against all eight graph products: it matches the four the CRM
+ * stocks and rejects the four it does not (PROM Humic Enriched, PROM Humic
+ * Based Flowering Booster, Zinc EDTA 12%, Boron EDTA). The two-word floor
+ * stops a hypothetical one-word CRM name from matching everything.
+ */
+function productWords(name: string): string[] {
+  return name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function makeStockedTest(products: ProductBrief[]): (graphName: string) => boolean {
+  const catalogue = products.map((p) => productWords(p.name)).filter((w) => w.length >= 2);
+  return (graphName: string) => {
+    const words = new Set(productWords(graphName));
+    return catalogue.some((entry) => entry.every((w) => words.has(w)));
+  };
+}
+
 function catalogueFacts(products: ProductBrief[]): string {
   if (products.length === 0) {
     return "The catalogue is empty right now. Do not name or price any product. If they ask, say you will confirm the details and have someone send them.";
@@ -124,13 +158,20 @@ ${lines}
  * the model is told explicitly not to state this more confidently than the
  * catalogue above, and never to volunteer it unprompted.
  */
-function graphFacts(facts: GraphFactsBrief): string {
+function graphFacts(facts: GraphFactsBrief, stocked: (name: string) => boolean): string {
   const lines: string[] = [];
 
+  // The graph is loaded by a separate ETL and has no isActive concept and no
+  // join back to the CRM — it knows eight products where the CRM sells four.
+  // Rendering a graph name we do not stock would contradict the "this is the
+  // whole catalogue, nothing else exists" line two blocks above, and the
+  // prompt now tells the agent to offer a range rather than one product, so
+  // it is far likelier to read one of these out.
   // Grouped per crop, not flattened: a lead who grows paddy and tomato needs
   // the agent to know which product goes with which, not one merged list.
   const productsByCrop = new Map<string, string[]>();
   for (const p of facts.suitableProducts) {
+    if (!stocked(p.product)) continue;
     const entry = p.stage ? `${p.product} (${p.stage} stage)` : p.product;
     productsByCrop.set(p.crop, [...(productsByCrop.get(p.crop) ?? []), entry]);
   }
@@ -140,7 +181,8 @@ function graphFacts(facts: GraphFactsBrief): string {
 
   const deficienciesByCrop = new Map<string, string[]>();
   for (const d of facts.cropDeficiencies) {
-    const entry = `${d.deficiency}${d.treatedBy.length ? ` (treated by ${d.treatedBy.join(", ")})` : ""}`;
+    const treatedBy = d.treatedBy.filter(stocked);
+    const entry = `${d.deficiency}${treatedBy.length ? ` (treated by ${treatedBy.join(", ")})` : ""}`;
     deficienciesByCrop.set(d.crop, [...(deficienciesByCrop.get(d.crop) ?? []), entry]);
   }
   for (const [crop, deficiencies] of deficienciesByCrop) {
@@ -156,7 +198,9 @@ function graphFacts(facts: GraphFactsBrief): string {
     if (bits.length) lines.push(`${d.name} district context: ${bits.join("; ")}.`);
   }
   if (facts.personas.length > 0) {
-    const prefs = facts.personas.map((p) => p.preferredProducts.join(", ")).filter(Boolean);
+    const prefs = facts.personas
+      .map((p) => p.preferredProducts.filter(stocked).join(", "))
+      .filter(Boolean);
     if (prefs.length) lines.push("Similar farmers in this crop/area typically prefer: " + prefs.join("; "));
   }
 
@@ -183,6 +227,14 @@ export function buildSystemPrompt(
   // off (the common case today), leave the existing "you cannot send a
   // quotation yourself" wording untouched below.
   const autoQuoteEnabled = process.env.AI_AUTO_QUOTE_ENABLED === "true";
+  // Only an Indic language has a script to insist on, and the rule has to be
+  // absent (not merely inapplicable) on an English call: interpolated, it read
+  // "Write Indian English in its own native script ... Bengali in Bengali
+  // script", and eval:agent caught the model answering four English scenarios
+  // in Bengali because of it.
+  const scriptRule = /english/i.test(language)
+    ? "- Write in plain Latin script, the way Indian business English is written."
+    : `- Write ${language} in its own script, never in Latin transliteration: the speech engine pronounces the letters you actually write, so a ${language} sentence spelled in Latin comes out mispronounced and robotic. English words people genuinely say out loud, like delivery, rate, quantity and vermicompost, may stay in Latin inside a native-script sentence.`;
 
   return `You are a sales executive at Urvar Natural, an organic-fertilizer company in India, calling a lead. This is a real, live phone call — the person can hear you speak. You are not a bot reading a script; you are a knowledgeable person having a short, useful conversation.
 
@@ -191,7 +243,7 @@ ${leadFacts(lead)}
 ${historyFacts(priorCalls)}
 Products you may discuss (this is the whole catalogue — nothing else exists):
 ${catalogueFacts(products)}
-${graphFacts(graph)}
+${graphFacts(graph, makeStockedTest(products))}
 HOW YOU SPEAK — this matters more than anything else below:
 - Be brief. A question of yours should be 5-15 words, and open each turn with a short sentence.
 - Ask exactly ONE question per turn. Never stack two questions together.
@@ -199,25 +251,26 @@ HOW YOU SPEAK — this matters more than anything else below:
 - Don't pad, and don't raise topics nobody asked about. But DO answer properly when asked something directly — brevity must never make you unhelpful.
 - Let them talk more than you do. Silence after your question is fine.
 
-IF THEY ASK WHO YOU ARE, or to introduce yourself, or where you are calling from — answer it properly before anything else: your name is not needed, but say you are calling from Urvar Natural, that Urvar makes organic fertilisers, bio-fertilisers and soil-health products for farmers, distributors, dealers, retailers and FPOs across India, and why you are calling them. Say it like someone who knows the business, not a slogan, and stay within your normal turn length even here. Only then continue. Never answer this with a bare company name and an immediate counter-question, and never ignore it to stay on your own agenda. If they ask twice, they did not hear you: say it again more slowly and more fully, and do not ask anything else that turn.
+IF THEY ASK WHO YOU ARE, or to introduce yourself, or where you are calling from — answer it properly before anything else: your name is not needed, but say you are calling from Urvar Natural, that Urvar makes organic fertilisers, bio-fertilisers and soil-health products for farmers, distributors, dealers, retailers and FPOs across India, naming two or three of the actual products from the list above rather than only the first one, and why you are calling them. Say it like someone who knows the business, not a slogan, and stay within your normal turn length even here. Only then continue. Never answer this with a bare company name and an immediate counter-question, and never ignore it to stay on your own agenda. If they ask twice, they did not hear you: say it again more slowly and more fully, and do not ask anything else that turn.
 
 HOW THE CALL SHOULD GO — follow this order, but if they jump ahead, or give a clear buying signal (see the transfer rule below), act on that instead of asking the next scripted question:
 1. Greet them, say you are calling from Urvar Natural about organic fertilisers and soil-health products, ask if now is a good time.
 2. If they are busy but have not named a time, ask when would suit them better and wait — never end the call in the same turn you ask, because "I am busy" is a reason to book a time, not to hang up on someone. The moment they DO name a time, call schedule_follow_up.
 3. Unless they already gave a buying signal (a trade buyer asking for a price list counts — transfer instead, do not ask this), ask a qualifying question that fits their Segment (shown above), one fact per turn: Farmer — what they grow and how much land; Retailer or Agri Input Shop — what they currently stock and roughly how much they sell in a month; Dealer or Distributor — what volume they currently handle and which brands they carry; FPO / Cooperative or NGO — how many member or beneficiary farmers they represent and the land or demand across them; Government — the tender or scheme quantity and specification; Corporate Farm or Plantation — how much land they manage and what they grow. If Segment is missing, ask what kind of buyer they are before choosing a question.
 4. Find out what they use now, how much they need, and when.
-5. Only then suggest a product, and only one from the list above.
+5. Only then suggest products — two or three from the list above that fit their crop, problem and Segment, in one short turn, not the same one every time and never a recital of the whole list. If they ask what else you have, name the remaining ones briefly and ask which to go into. Never name anything that is not on that list.
 6. Handle an objection without arguing and without offering a discount: for price, ask what they are comparing against; if they have never used it, suggest a small trial; if they use another brand, ask how it has worked; if they want it later, ask roughly when; if they doubt it works, say what it does but never promise a yield figure. For dealer margin, delivery or credit terms, say our team will confirm and book a callback.
 7. Agree a next step before ending: a callback, or a person to call them.${autoQuoteEnabled ? " If they are an existing customer asking to reorder a standard product and quantity, call create_quotation — if it refuses, fall back to the next sentence." : ""} If they have already told you a quantity and roughly when they need it${autoQuoteEnabled ? " and create_quotation was not used or was refused" : ""}, tell them our sales team will prepare a formal quotation and follow up with them, then call schedule_follow_up — never say you are sending or preparing the quotation yourself${autoQuoteEnabled ? " unless create_quotation actually confirmed it" : ""}, because that is not something you can${autoQuoteEnabled ? " otherwise" : ""} do. This does not delay ending the call: a clear closing cue from the lead always ends the call, whether or not timing was pinned down.
 
 Rules:
 - Your words are read aloud by a speech engine, so write how people talk, not how they write. Never use dashes, brackets, bullet points, quotes, emoji, or abbreviations like "etc." — a dash becomes an abrupt break when spoken. Write numbers and units the way you would say them.
-- Sound warm and human: react to what they say ("achha", "thik ache") before moving on, and vary your wording instead of repeating the same phrasing every turn.
+- Sound warm and human: react to what they just said in two or three words before moving on, and vary your wording rather than opening every turn the same way.
 - Start the call in ${language}, because that is this lead's regional language. If they reply in a different language, switch immediately and match them from then on, including Hindi/English/Bengali code-switching.
+${scriptRule}
 - The lead's details AND the full catalogue above are already loaded — do NOT call get_lead_context or get_product_info for anything already listed there. Answer price and pack-size questions straight from the list, because a tool call is a second of silence on a live phone call. Only use get_product_info if they ask about something not on the list at all. Use check_quotation_status when they ask about a quotation.${autoQuoteEnabled ? " Use create_quotation only for a simple standard reorder from an existing customer — never state a price yourself, only what its response confirms." : ""}
 - You may be interrupted mid-sentence. If you are told you were cut off, do NOT restart your pitch — answer what they just said and carry on from where you were. (Asking who you are is the exception above: always answer that.)
 - Don't repeat a question you have already asked. If the lead only says "hello" or "bataiye", assume they simply did not catch the last line: rephrase it once, more briefly, rather than starting over.
-- Speech-to-text sometimes splits one answer into several short fragments (e.g. "we" then, a moment later, "Harmicompost"). If what you were just told looks like an incomplete sentence fragment rather than a real non-answer — a trailing word, a lone noun, something that reads like it was cut off — do NOT treat it as a failure to hear and do NOT re-ask your last question verbatim. Instead, briefly invite them to continue ("hnji, aur?", "bolte rahiye") so the rest of their answer can land, and only ask the full question again if the next thing they say still doesn't answer it.
+- Speech-to-text sometimes splits one answer into several short fragments (e.g. "we" then, a moment later, "Harmicompost"). If what you were just told looks like an incomplete sentence fragment rather than a real non-answer — a trailing word, a lone noun, something that reads like it was cut off — do NOT treat it as a failure to hear and do NOT re-ask your last question verbatim. Instead, briefly invite them to continue with a short "yes, go on" in the language you are speaking, so the rest of their answer can land, and only ask the full question again if the next thing they say still doesn't answer it.
 - NEVER read internal system data aloud. Do not mention databases, systems, fields, MRP codes, or say things like "the system shows". Where the list above says a price must be confirmed, simply say our team will confirm the exact rate and offer to have it shared — never quote or imply a number you were not given.
 - Transfer to a person ONLY on a clear buying signal: they say they want to place an order, they name a quantity they intend to buy now, they ask about becoming a dealer, they ask for a price list or rate card as a trade buyer (retailer, dealer, distributor, agri input shop), or they ask to speak to someone. Then call transfer_to_human and stop selling. Simply asking the price as an end consumer is NOT a buying signal — answer it and carry on qualifying.
 - Never say you are connecting them until the transfer has actually been made. Say something neutral like "let me get our sales person for you" and call the tool. If transfer_to_human returns an error, do not mention transferring at all: call schedule_follow_up and say our executive will call them back shortly.
@@ -352,6 +405,14 @@ function isQuestion(sentence: string): boolean {
 
 type StreamedTurn = {
   content: string;
+  /** Resolves to this turn's text with any romanized sentence put back into
+   * the call's script, or null when nothing drifted.
+   *
+   * The caller does not wait for it: the audio has already gone out. It patches
+   * the assistant message in the history once it lands, which is what actually
+   * matters — drift is self-sustaining, and a romanized assistant turn sitting
+   * in the history is what keeps the next turn romanized. Never rejects. */
+  scriptFix: Promise<string | null>;
   toolCalls: { id: string; name: string; arguments: string }[];
   /** When the model produced anything at all — prose or the first fragment of
    * a tool call. A price question returns a tool call with almost no prose, so
@@ -374,6 +435,10 @@ async function consumeStream(
   stream: Awaited<ReturnType<typeof createCompletion>>,
   onSentence: ((sentence: string) => void) | undefined,
   isCancelled: () => boolean,
+  /** The call's voice language, so a sentence the model wrote in Latin can be
+   * put back into that language's script before it is spoken. Null for
+   * callers with no voice (the eval harness), which skips the guard. */
+  language: SarvamTtsLanguage | null = null,
 ): Promise<StreamedTurn> {
   let content = "";
   let unspoken = "";
@@ -381,6 +446,30 @@ async function consumeStream(
   let held = "";
   let firstTokenAt: number | null = null;
   const byIndex = new Map<number, { id: string; name: string; arguments: string }>();
+
+  // Speak first, correct afterwards. The script guard's network hop measured
+  // 524-875ms per sentence against the live endpoint, with a cold-connection
+  // outlier over 1500ms — far too much to put in front of every sentence of a
+  // turn. So the sentence goes out as the model wrote it, and the conversion
+  // runs alongside it: by the time the lead has listened and replied, the
+  // corrected text is in the history and the next turn is written in the right
+  // script. Drift is self-sustaining rather than random, so that is where
+  // nearly all of the value is, and it costs the caller nothing.
+  //
+  // Emission is funnelled through here so the guard cannot be bypassed by one
+  // of the three call sites below. toNativeScript() makes no network call at
+  // all unless the sentence actually looks like drift.
+  const scriptFixes: Promise<{ before: string; after: string }>[] = [];
+  const emit = onSentence
+    ? (sentence: string) => {
+        onSentence(sentence);
+        if (language) {
+          scriptFixes.push(
+            toNativeScript(sentence, language).then((after) => ({ before: sentence, after })),
+          );
+        }
+      }
+    : undefined;
 
   for await (const chunk of stream) {
     if (isCancelled()) break;
@@ -396,7 +485,7 @@ async function consumeStream(
       unspoken += delta.content;
       // Only flush on a boundary — speaking half a clause would sound worse
       // than the latency it saves.
-      if (onSentence) {
+      if (emit) {
         const { sentences, rest } = takeSentences(unspoken);
         unspoken = rest;
         for (const sentence of sentences) {
@@ -416,15 +505,15 @@ async function consumeStream(
           // on its own is what fillerWord() already says every turn, whereas
           // a flattened question misleads the person on the phone.
           if (isQuestion(sentence)) {
-            if (held) onSentence(held);
+            if (held) emit(held);
             held = "";
-            onSentence(sentence);
+            emit(sentence);
             continue;
           }
           // Merge short pieces so each spoken utterance is a natural unit.
           held = held ? `${held} ${sentence}` : sentence;
           if (held.length >= MIN_SPEAK_CHARS) {
-            onSentence(held);
+            emit(held);
             held = "";
           }
         }
@@ -443,9 +532,18 @@ async function consumeStream(
   // Anything held back for being short, plus any text that never got a
   // closing punctuation mark, still has to be said.
   const tail = [held, unspoken.trim()].filter(Boolean).join(" ").trim();
-  if (onSentence && tail && !isCancelled()) onSentence(tail);
+  if (emit && tail && !isCancelled()) emit(tail);
 
-  return { content, toolCalls: [...byIndex.values()].filter((t) => t.name), firstTokenAt };
+  return {
+    content,
+    scriptFix: scriptFixes.length
+      ? Promise.all(scriptFixes).then((parts) =>
+          parts.some((p) => p.after !== p.before) ? parts.map((p) => p.after).join(" ") : null,
+        )
+      : Promise.resolve(null),
+    toolCalls: [...byIndex.values()].filter((t) => t.name),
+    firstTokenAt,
+  };
 }
 
 export async function runAgentTurn(
@@ -457,6 +555,10 @@ export async function runAgentTurn(
   onSentence?: (sentence: string) => void,
   /** Lets a barge-in abandon the rest of an in-flight reply. */
   isCancelled: () => boolean = () => false,
+  /** The call's voice language, passed through to the script guard so a
+   * romanized reply is put back into that language's script before it is
+   * spoken. Null for callers with no voice, e.g. scripts/eval-agent.ts. */
+  language: SarvamTtsLanguage | null = null,
 ): Promise<AgentTurnResult> {
   const messages: ChatCompletionMessageParam[] = [
     ...history,
@@ -486,7 +588,12 @@ export async function runAgentTurn(
       completionBody(provider, { messages, tools: CRM_TOOLS, stream: true }, 200),
     );
 
-    const { content, toolCalls, firstTokenAt } = await consumeStream(stream, onSentence, isCancelled);
+    const { content, scriptFix, toolCalls, firstTokenAt } = await consumeStream(
+      stream,
+      onSentence,
+      isCancelled,
+      language,
+    );
     // Only the first hop's first token is the caller's perceived latency;
     // later hops are already behind spoken audio or a filler word.
     if (timings.firstTokenAt === null) timings.firstTokenAt = firstTokenAt;
@@ -497,7 +604,7 @@ export async function runAgentTurn(
       return { reply: content.trim(), history: messages, controlSignal, timings };
     }
 
-    messages.push(
+    const assistantMessage: ChatCompletionAssistantMessageParam =
       toolCalls.length > 0
         ? {
             role: "assistant",
@@ -508,8 +615,18 @@ export async function runAgentTurn(
               function: { name: t.name, arguments: t.arguments },
             })),
           }
-        : { role: "assistant", content },
-    );
+        : { role: "assistant", content };
+    messages.push(assistantMessage);
+
+    // Patch the history in place once the script guard catches up. Deliberately
+    // not awaited: the audio for this turn has already gone out, and blocking
+    // here would delay the TTS flush that server.ts does right after this call
+    // returns — i.e. it would put the latency back, just in a different place.
+    // The lead has to listen and reply before the next turn reads this, which
+    // is several seconds, so the correction is in place long before it counts.
+    void scriptFix.then((fixed) => {
+      if (fixed) assistantMessage.content = fixed;
+    });
 
     if (toolCalls.length === 0) {
       // No tool calls — this was the model's spoken reply, already streamed
@@ -542,7 +659,7 @@ export async function runAgentTurn(
         provider,
         completionBody(provider, { messages, tools: CRM_TOOLS, stream: true }, 100),
       );
-      const closing = await consumeStream(closingStream, onSentence, isCancelled);
+      const closing = await consumeStream(closingStream, onSentence, isCancelled, language);
       const closingText = closing.content.trim();
       if (closingText) messages.push({ role: "assistant", content: closingText });
       return { reply: closingText, history: messages, controlSignal, timings };
@@ -550,7 +667,10 @@ export async function runAgentTurn(
   }
 
   return {
-    reply: "Sorry, let me have someone call you back.",
+    // server.ts speaks this when the turn produced no prose of its own, so it
+    // has to be in the call's language — it was a hardcoded English sentence,
+    // read aloud mid-way through a Bengali conversation.
+    reply: fallbackLine(language ?? "en-IN"),
     history: messages,
     controlSignal: "end_call",
     timings,
