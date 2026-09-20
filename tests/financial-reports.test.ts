@@ -4,6 +4,7 @@ import { createInvoiceFromOrder } from "@/lib/accounting/invoicing";
 import { postPurchaseInvoice } from "@/lib/accounting/purchase-posting";
 import {
   trialBalance, generalLedger, profitAndLoss, balanceSheet, gstTaxSummary, gstOutwardSupplyRegister,
+  accountsReceivableAgeing, accountsPayableAgeing,
 } from "@/lib/accounting/financial-reports";
 import { toAmountString, sum } from "@/lib/accounting/money";
 import {
@@ -299,6 +300,83 @@ describe("gstOutwardSupplyRegister()", () => {
 
       const rows = await gstOutwardSupplyRegister(date, date, tx);
       expect(rows).toHaveLength(0);
+    });
+  });
+});
+
+describe("accountsReceivableAgeing()", () => {
+  it("buckets an invoice by days past its due date", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 10, unitPrice: 100,
+      });
+      const dueDate = new Date(date.getTime() + 5 * 24 * 60 * 60 * 1000);
+      await createInvoiceFromOrder({ orderId: order.id, invoiceDate: date, dueDate, createdById: userId }, tx);
+
+      const asOf = new Date(dueDate.getTime() + 40 * 24 * 60 * 60 * 1000); // 40 days past due
+      const rows = await accountsReceivableAgeing(asOf, tx);
+      const row = rows.find((r) => r.partyId === customer.id);
+      expect(row).toBeDefined();
+      expect(toAmountString(row!.buckets.d31_60)).toBe("1050.00");
+      expect(toAmountString(row!.buckets.current)).toBe("0.00");
+      expect(toAmountString(row!.total)).toBe("1050.00");
+    });
+  });
+
+  it("omits a fully paid invoice", async () => {
+    await withRollback(async (tx) => {
+      const { recordReceipt } = await import("@/lib/accounting/receipts");
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 1, unitPrice: 100,
+      });
+      const dueDate = new Date(date.getTime() + 5 * 24 * 60 * 60 * 1000);
+      const invoice = await createInvoiceFromOrder(
+        { orderId: order.id, invoiceDate: date, dueDate, createdById: userId }, tx,
+      );
+      const cashAccountId = await accountId(tx, "1110");
+      await recordReceipt(
+        {
+          receiptDate: date, customerId: customer.id, amount: invoice.totalAmount, method: "CASH",
+          depositAccountId: cashAccountId,
+          allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }], createdById: userId,
+        },
+        tx,
+      );
+
+      const asOf = new Date(dueDate.getTime() + 60 * 24 * 60 * 60 * 1000);
+      const rows = await accountsReceivableAgeing(asOf, tx);
+      expect(rows.find((r) => r.partyId === customer.id)).toBeUndefined();
+    });
+  });
+});
+
+describe("accountsPayableAgeing()", () => {
+  it("buckets a purchase invoice by days since its invoice date", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const supplier = await testSupplier(tx, { userId, state: "West Bengal" });
+      const invoice = await testPurchaseInvoice(tx, {
+        userId, supplierId: supplier.id, invoiceDate: date, subtotal: "1000", taxAmount: "50", totalAmount: "1050",
+      });
+      await postPurchaseInvoice({ invoiceId: invoice.id, postedById: userId }, tx);
+
+      const asOf = new Date(date.getTime() + 75 * 24 * 60 * 60 * 1000); // 75 days since invoice date
+      const rows = await accountsPayableAgeing(asOf, tx);
+      const row = rows.find((r) => r.partyId === supplier.id);
+      expect(row).toBeDefined();
+      expect(toAmountString(row!.buckets.d61_90)).toBe("1050.00");
+      expect(toAmountString(row!.total)).toBe("1050.00");
     });
   });
 });

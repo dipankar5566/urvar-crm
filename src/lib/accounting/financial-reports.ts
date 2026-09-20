@@ -379,3 +379,107 @@ export async function gstOutwardSupplyRegister(
     total: item.lineTotal,
   }));
 }
+
+export type AgeingBucketKey = "current" | "d1_30" | "d31_60" | "d61_90" | "d90_plus";
+export const AGEING_BUCKET_LABELS: Record<AgeingBucketKey, string> = {
+  current: "Current",
+  d1_30: "1-30 days",
+  d31_60: "31-60 days",
+  d61_90: "61-90 days",
+  d90_plus: "90+ days",
+};
+const AGEING_BUCKET_KEYS: AgeingBucketKey[] = ["current", "d1_30", "d31_60", "d61_90", "d90_plus"];
+
+function ageingBucket(daysOverdue: number): AgeingBucketKey {
+  if (daysOverdue <= 0) return "current";
+  if (daysOverdue <= 30) return "d1_30";
+  if (daysOverdue <= 60) return "d31_60";
+  if (daysOverdue <= 90) return "d61_90";
+  return "d90_plus";
+}
+
+export type AgeingRow = {
+  partyId: string;
+  partyName: string;
+  buckets: Record<AgeingBucketKey, Money>;
+  total: Money;
+};
+
+function emptyBuckets(): Record<AgeingBucketKey, Money> {
+  return { current: money(0), d1_30: money(0), d31_60: money(0), d61_90: money(0), d90_plus: money(0) };
+}
+
+/**
+ * Every customer with an open (non-fully-paid, non-cancelled) invoice,
+ * bucketed by days past `dueDate`. An invoice with no due date is treated as
+ * `current` — it can't be aged without one, and that is never guessed.
+ */
+export async function accountsReceivableAgeing(asOfDate: Date, db: Db = prisma): Promise<AgeingRow[]> {
+  const { outstandingOnInvoice } = await import("./receipts");
+
+  const invoices = await db.salesInvoice.findMany({
+    where: { status: { in: ["POSTED", "PARTIALLY_PAID"] }, invoiceDate: { lte: asOfDate } },
+    select: { id: true, customerId: true, dueDate: true, customer: { select: { name: true } } },
+  });
+
+  const byCustomer = new Map<string, AgeingRow>();
+  for (const inv of invoices) {
+    const outstanding = await outstandingOnInvoice(inv.id, db);
+    if (outstanding.isZero()) continue;
+
+    const daysOverdue = inv.dueDate
+      ? Math.floor((asOfDate.getTime() - inv.dueDate.getTime()) / (24 * 60 * 60 * 1000))
+      : 0;
+    const bucket = ageingBucket(daysOverdue);
+
+    const row = byCustomer.get(inv.customerId) ?? {
+      partyId: inv.customerId,
+      partyName: inv.customer.name,
+      buckets: emptyBuckets(),
+      total: money(0),
+    };
+    row.buckets[bucket] = add(row.buckets[bucket], outstanding);
+    row.total = add(row.total, outstanding);
+    byCustomer.set(inv.customerId, row);
+  }
+
+  return [...byCustomer.values()].sort((a, b) => b.total.comparedTo(a.total));
+}
+
+/**
+ * Every supplier with an open (non-fully-paid, non-cancelled) purchase
+ * invoice, bucketed by days since `invoiceDate` — `PurchaseInvoice` has no
+ * due-date field (the OCR intake never captures payment terms), so this
+ * ages from the invoice date rather than inventing a due date.
+ */
+export async function accountsPayableAgeing(asOfDate: Date, db: Db = prisma): Promise<AgeingRow[]> {
+  const { outstandingOnPurchaseInvoice } = await import("./supplier-payments");
+
+  const invoices = await db.purchaseInvoice.findMany({
+    where: { status: { in: ["POSTED", "PARTIALLY_PAID"] }, invoiceDate: { lte: asOfDate } },
+    select: { id: true, supplierId: true, invoiceDate: true, supplier: { select: { name: true } } },
+  });
+
+  const bySupplier = new Map<string, AgeingRow>();
+  for (const inv of invoices) {
+    const outstanding = await outstandingOnPurchaseInvoice(inv.id, db);
+    if (outstanding.isZero()) continue;
+
+    const daysOverdue = Math.floor((asOfDate.getTime() - inv.invoiceDate.getTime()) / (24 * 60 * 60 * 1000));
+    const bucket = ageingBucket(daysOverdue);
+
+    const row = bySupplier.get(inv.supplierId) ?? {
+      partyId: inv.supplierId,
+      partyName: inv.supplier.name,
+      buckets: emptyBuckets(),
+      total: money(0),
+    };
+    row.buckets[bucket] = add(row.buckets[bucket], outstanding);
+    row.total = add(row.total, outstanding);
+    bySupplier.set(inv.supplierId, row);
+  }
+
+  return [...bySupplier.values()].sort((a, b) => b.total.comparedTo(a.total));
+}
+
+export { AGEING_BUCKET_KEYS };

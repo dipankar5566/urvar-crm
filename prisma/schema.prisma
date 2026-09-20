@@ -1563,6 +1563,12 @@ model SalesInvoiceItem {
   estimatedUnitCost   Decimal? @db.Decimal(14, 4)
   estimatedCostAmount Decimal? @db.Decimal(14, 2)
 
+  /// How much of this line has already been credited, mirroring
+  /// OrderItem.quantityInvoiced exactly — without it a second credit note
+  /// against the same line has no way to know a first one already used up
+  /// part or all of the quantity, and could credit more than was ever sold.
+  quantityCredited Decimal @default(0) @db.Decimal(12, 2)
+
   lineNumber Int
 
   @@index([invoiceId])
@@ -1673,6 +1679,11 @@ model CreditNote {
 
   postedEntryId String?   @unique
   postedAt      DateTime?
+  /// Every other posted document (SalesInvoice, PurchaseInvoice, Expense,
+  /// StockValuation) has this; CreditNote was missing it since Phase 2 —
+  /// added so cancellation follows the same reversal-not-deletion path as
+  /// everywhere else instead of having none at all.
+  cancelledAt   DateTime?
 
   createdById String
   createdBy   User   @relation("CreditNoteCreator", fields: [createdById], references: [id])

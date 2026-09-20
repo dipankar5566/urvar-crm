@@ -360,6 +360,68 @@ change. No scripted eval scenario exercises `get_account_status` itself —
 noted as a coverage gap, not exercised because the harness has no "customer
 asks about their balance" scenario today.
 
+## Phase 7 — closing deferred gaps (done, 2026-09-20)
+
+Not a pre-planned phase — the plan only ever defined Phases 1-6. When asked
+to "continue to phase 7," there was no such phase to continue, so this was
+put to the user directly rather than guessed at; the answer was to close the
+engineering-only items deferred across Phases 1-6, leaving out the two that
+carry real production or scope risk (below).
+
+**Two small additive schema changes**, both correctness gaps rather than new
+features: `CreditNote.cancelledAt` (every other posted document already had
+one; CreditNote was missing it since Phase 2) and
+`SalesInvoiceItem.quantityCredited` (mirrors `OrderItem.quantityInvoiced`
+exactly — without it a second credit note against the same line has no way
+to know a first one already used up part of the quantity).
+
+**`src/lib/accounting/credit-notes.ts`** — `createCreditNote()`/
+`cancelCreditNote()`, deferred from Phase 2 ("no live invoices to credit
+against yet"). Built as an engine tested against synthetic fixtures, same as
+everything else in this system before real transaction volume existed. Each
+line's tax is proportional to the *original* invoice line's own priced
+amounts, never re-resolved from the current `TaxRate` — a credit note must
+reference the rate the original supply was taxed at. UI: a "New Credit Note"
+dialog on the invoice detail page, `/credit-notes/[creditNoteId]` for detail
+and cancellation. 7 new tests.
+
+**AR/AP ageing reports** (`accountsReceivableAgeing()`/
+`accountsPayableAgeing()` in `financial-reports.ts`, `/accounting/reports/
+ar-ageing` and `/ap-ageing`) — `customerReceivable()`/`supplierPayable()`
+already gave the totals; this buckets them by age (Current, 1-30, 31-60,
+61-90, 90+). AR ages from `SalesInvoice.dueDate`; AP ages from
+`PurchaseInvoice.invoiceDate` since that model has no due-date field at
+all — documented in the UI rather than silently assuming a payment term. 3
+new tests.
+
+**Audit-log filter gap, found again.** `CreditNote` and `StockValuation`
+(Phase 4) had never been added to the audit-logs page's `ENTITY_TYPES`
+array — the same "the row existed and was unfilterable" pattern caught in
+Phases 2, 3 and 6. Fixed alongside this pass.
+
+**Explicitly left out, with reasoning, not silently skipped:**
+- **Centralizing the three quotation write paths (R8)** — `quotations/
+  actions.ts`, the public unauthenticated accept-token route, and the voice
+  agent's `create_quotation` tool each still create an `Order` independently.
+  This is a refactor of three live, production-traffic-bearing paths (one of
+  them the only unauthenticated write endpoint in the app) for the sake of a
+  future invoicing hook that doesn't have a concrete use case yet — real
+  regression risk for no immediate payoff, unlike the items above which were
+  all pure additions.
+- **Per-line HSN/rate capture on purchase invoices** — still one blended
+  header `taxAmount` from OCR, so ITC is still split proportionally rather
+  than computed line-by-line. Fixing it means extending the Sarvam Vision
+  extraction schema in `purchases/actions.ts` *and* adding columns to
+  `PurchaseInvoiceItem` *and* reworking `postPurchaseInvoice()`'s tax split —
+  three coupled changes to an already-shipped, working intake flow, not a
+  same-shape addition like credit notes were.
+- **GST tax-invoice PDF template** — still cosmetic, not load-bearing; the
+  invoice detail page already renders everything the PDF would need.
+- **Expense receipt/bill attachment** — `File` already has a
+  `relatedPurchaseInvoiceId`-style pattern to copy, still not wired up.
+
+10 new tests (7 credit-notes + 3 ageing), **192 total**.
+
 ## Vyapar migration
 
 Runs alongside Phase 2. Masters and balances migrate; history does not.

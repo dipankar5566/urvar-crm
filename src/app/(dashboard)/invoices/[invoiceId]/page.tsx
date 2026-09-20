@@ -11,6 +11,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { CancelInvoiceButton } from "./cancel-invoice-button";
+import { NewCreditNoteDialog } from "./new-credit-note-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -37,14 +38,24 @@ export default async function InvoiceDetailPage({
       customer: true,
       items: { orderBy: { lineNumber: "asc" } },
       allocations: { include: { receipt: true } },
+      creditNotes: { orderBy: { noteDate: "desc" } },
       createdBy: { select: { name: true } },
     },
   });
   if (!invoice) notFound();
 
   const canApprove = can(user.role, "accounting", "approve") !== "none";
+  const canWrite = can(user.role, "invoices", "write") !== "none";
   const paid = invoice.allocations.reduce((sum, a) => sum + Number(a.amount), 0);
   const outstanding = Number(invoice.totalAmount) - paid;
+  const creditableLines = invoice.items
+    .filter((i) => i.quantity.greaterThan(i.quantityCredited))
+    .map((i) => ({
+      id: i.id,
+      description: i.description,
+      unit: i.unit,
+      remaining: i.quantity.minus(i.quantityCredited).toFixed(2),
+    }));
 
   return (
     <div className="space-y-6">
@@ -54,6 +65,9 @@ export default async function InvoiceDetailPage({
         action={
           <div className="flex items-center gap-2">
             <Badge variant={STATUS_VARIANT[invoice.status] ?? "secondary"}>{invoice.status}</Badge>
+            {canWrite && invoice.status !== "CANCELLED" && creditableLines.length > 0 && (
+              <NewCreditNoteDialog invoiceId={invoice.id} lines={creditableLines} />
+            )}
             {canApprove && invoice.status !== "CANCELLED" && (
               <CancelInvoiceButton invoiceId={invoice.id} />
             )}
@@ -158,6 +172,46 @@ export default async function InvoiceDetailPage({
                       {a.receipt.receiptDate.toLocaleDateString("en-IN")}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatInr(a.amount)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {invoice.creditNotes.length > 0 && (
+        <Card>
+          <CardContent className="p-0">
+            <div className="border-b px-4 py-3 text-sm font-semibold">Credit Notes</div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Credit Note</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invoice.creditNotes.map((cn) => (
+                  <TableRow key={cn.id}>
+                    <TableCell>
+                      <Link href={`/credit-notes/${cn.id}`} className="font-mono text-xs underline">
+                        {cn.creditNoteNumber}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {cn.noteDate.toLocaleDateString("en-IN")}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{cn.reason.replaceAll("_", " ")}</TableCell>
+                    <TableCell>
+                      <Badge variant={cn.cancelledAt ? "outline" : "default"}>
+                        {cn.cancelledAt ? "CANCELLED" : "POSTED"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{formatInr(cn.totalAmount)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -68,16 +68,25 @@ it silently decides CGST+SGST vs IGST on every invoice.
 The split is what makes over-payment safe: anything not allocated to a
 specific invoice lands in advances rather than driving a receivable negative.
 
-### Credit note (sales return or correction) — schema exists, posting not yet wired
+### Credit note (`createCreditNote()`) — implemented (Phase 7)
 
 | Account | Dr | Cr |
 |---|---|---|
 | `SALES_RETURNS` | Taxable value | |
-| `GST_OUTPUT_CGST` / `SGST` / `IGST` | Tax reversed | |
+| `GST_OUTPUT_CGST` / `SGST` / `IGST` / `CESS` | Tax reversed | |
+| `ROUND_OFF` | either side | Sub-rupee adjustment (mirror image of the sales-invoice polarity — AR moves the opposite direction here) |
 | `AR_TRADE` (party: customer) | | Credit note total |
 
 `SALES_RETURNS` is a contra-revenue account (normal balance DEBIT) so gross
-sales stays visible rather than being netted away.
+sales stays visible rather than being netted away. Every line's tax is
+**proportional to the original invoice line's own priced amounts**, never
+re-resolved from the current `TaxRate` — a credit note must reference the
+rate the original supply was actually taxed at, not whatever rate is in
+effect on the day it's issued. `SalesInvoiceItem.quantityCredited` (added
+this phase) tracks how much of each line has already been credited, so a
+second credit note against the same line can't exceed what was ever sold.
+Posts at creation, like a sales invoice; cancellation reverses the entry and
+releases the credited quantity back onto the invoice line.
 
 ### Opening balance — migrated from Vyapar
 

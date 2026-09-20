@@ -12,6 +12,8 @@ const REPORTS = [
   { href: "/accounting/reports/profit-and-loss", title: "Profit & Loss", description: "Income and expenses over a date range." },
   { href: "/accounting/reports/balance-sheet", title: "Balance Sheet", description: "Assets, liabilities and equity as of a date." },
   { href: "/accounting/reports/gst", title: "GST Registers", description: "Output tax vs. input credit, and the outward-supply detail, for return preparation." },
+  { href: "/accounting/reports/ar-ageing", title: "AR Ageing", description: "Every customer with an open invoice, bucketed by days past due." },
+  { href: "/accounting/reports/ap-ageing", title: "AP Ageing", description: "Every supplier with an open purchase invoice, bucketed by days since the invoice date." },
 ];
 
 export default async function FinancialReportsPage() {

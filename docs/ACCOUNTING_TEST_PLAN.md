@@ -7,12 +7,13 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-182 tests across fifteen files (62 from Phase 1, 47 added in Phase 2, 33
+192 tests across sixteen files (62 from Phase 1, 47 added in Phase 2, 33
 added in Phase 3, 23 added in Phase 4, 11 added in Phase 5, 6 added in Phase
-6). This is the repo's first automated test suite; everything outside
-`src/lib/accounting/` still has no coverage — Phase 6's voice-agent tool
-wiring is exercised only by `npm run eval:agent`, and even that harness has
-no scripted scenario for `get_account_status` itself (see below).
+6, 10 added in Phase 7). This is the repo's first automated test suite;
+everything outside `src/lib/accounting/` still has no coverage — Phase 6's
+voice-agent tool wiring is exercised only by `npm run eval:agent`, and even
+that harness has no scripted scenario for `get_account_status` itself (see
+below).
 
 ## The constraint that shapes everything
 
@@ -249,3 +250,22 @@ code path and by `npx tsc`/`npm run lint`/`npm run build` all passing; the
 eval harness itself has no scripted "customer asks about their balance"
 scenario, a real coverage gap worth closing before this flag is ever flipped
 on in production.
+
+## Phase 7 coverage (implemented)
+
+### `tests/credit-notes.test.ts` — 7 tests
+`createCreditNote()`: crediting the full remaining quantity of every line by
+default produces a balanced entry and nets the customer's receivable to
+`0.00`; crediting a partial quantity correctly prorates tax and tracks
+`quantityCredited` on the invoice line; refuses to credit more than the
+remaining creditable quantity; refuses a second credit note that would push
+the cumulative credited quantity past what a first one already left; refuses
+to credit a cancelled invoice. `cancelCreditNote()`: reverses the entry and
+releases the credited quantity back onto the invoice line; refuses to cancel
+an already-cancelled credit note.
+
+### `tests/financial-reports.test.ts` additions — `accountsReceivableAgeing()`/`accountsPayableAgeing()`, 3 tests
+An invoice is bucketed correctly by days past its due date; a fully paid
+invoice is omitted entirely; a purchase invoice is bucketed by days since
+its invoice date (no due-date field exists on `PurchaseInvoice` to bucket
+from instead).

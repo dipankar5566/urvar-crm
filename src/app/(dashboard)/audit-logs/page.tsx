@@ -39,6 +39,10 @@ const ENTITY_TYPES = [
   "SupplierPayment",
   "Expense",
   "Supplier",
+  // Phase 7: credit-notes.ts logs CreditNote CREATE/CANCEL — same
+  // "add it when the logAudit() call site lands" gap as every entry above.
+  "CreditNote",
+  "StockValuation",
 ];
 const ACTIONS = [
   "CREATE",
