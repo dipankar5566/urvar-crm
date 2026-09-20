@@ -171,3 +171,60 @@ export async function testOrderWithLine(
     include: { items: true },
   });
 }
+
+/** A throwaway supplier in a given state, for purchase tax-split tests. */
+export async function testSupplier(
+  tx: Prisma.TransactionClient,
+  opts: { userId: string; state?: string | null; gstNumber?: string | null },
+) {
+  const n = ++seq;
+  return tx.supplier.create({
+    data: {
+      supplierCode: `TEST-SUP-${Date.now()}-${n}`,
+      name: `Test Supplier ${n}`,
+      state: opts.state === undefined ? "West Bengal" : opts.state,
+      gstNumber: opts.gstNumber ?? null,
+      createdById: opts.userId,
+    },
+  });
+}
+
+/** A DRAFT purchase invoice with one line, ready to post. */
+export async function testPurchaseInvoice(
+  tx: Prisma.TransactionClient,
+  opts: {
+    userId: string;
+    supplierId: string;
+    invoiceDate?: Date;
+    subtotal?: string | number;
+    taxAmount?: string | number;
+    totalAmount?: string | number;
+    invoiceNumber?: string;
+  },
+) {
+  const n = ++seq;
+  const subtotal = opts.subtotal ?? 1000;
+  const taxAmount = opts.taxAmount ?? 50;
+  const totalAmount = opts.totalAmount ?? (Number(subtotal) + Number(taxAmount));
+  return tx.purchaseInvoice.create({
+    data: {
+      invoiceNumber: opts.invoiceNumber ?? `TEST-PINV-${Date.now()}-${n}`,
+      supplierId: opts.supplierId,
+      invoiceDate: opts.invoiceDate ?? new Date(),
+      subtotal: String(subtotal),
+      taxAmount: String(taxAmount),
+      totalAmount: String(totalAmount),
+      createdById: opts.userId,
+      items: {
+        create: [
+          {
+            description: "Test purchase line",
+            quantity: "1",
+            unitPrice: String(subtotal),
+            lineTotal: String(subtotal),
+          },
+        ],
+      },
+    },
+  });
+}

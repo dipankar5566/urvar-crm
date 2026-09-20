@@ -278,6 +278,9 @@ model User {
   salesInvoicesCreated    SalesInvoice[]         @relation("SalesInvoiceCreator")
   receiptsCreated         Receipt[]              @relation("ReceiptCreator")
   creditNotesCreated      CreditNote[]           @relation("CreditNoteCreator")
+  supplierPaymentsCreated SupplierPayment[]      @relation("SupplierPaymentCreator")
+  expensesCreated         Expense[]              @relation("ExpenseCreator")
+  expensesApproved        Expense[]              @relation("ExpenseApprover")
 
   @@index([role])
 }
@@ -908,11 +911,18 @@ model Supplier {
   email         String?
   gstNumber     String?
   address       String?
+  /// Nullable because suppliers are created as a side effect of saving a
+  /// scanned invoice and OCR doesn't extract it. Required before a purchase
+  /// invoice for this supplier can be POSTED — postPurchaseInvoice() needs it
+  /// to determine CGST+SGST vs IGST, and refuses to guess. See
+  /// src/app/(dashboard)/purchases/[invoiceId]/set-supplier-state.tsx for the
+  /// one place this gets filled in.
   state         String?
   district      String?
   isActive      Boolean           @default(true)
   notes         String?
   invoices      PurchaseInvoice[]
+  payments      SupplierPayment[]
   createdById   String
   createdBy     User              @relation("SupplierCreator", fields: [createdById], references: [id])
   createdAt     DateTime          @default(now())
@@ -921,29 +931,65 @@ model Supplier {
   @@index([name])
 }
 
+enum PurchaseInvoiceStatus {
+  /// Captured (often by OCR) but not yet posted — deliberately a real state,
+  /// unlike SalesInvoice which posts at creation. A misread total from a
+  /// photographed invoice should not reach the ledger unreviewed; a person
+  /// checks it on the detail page and posts it explicitly.
+  DRAFT
+  POSTED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
 model PurchaseInvoice {
-  id            String                @id @default(cuid())
+  id            String   @id @default(cuid())
   /// The supplier's own invoice number, not ours — so it is unique per
   /// supplier rather than globally. Two suppliers may both issue "INV-001".
   invoiceNumber String
   supplierId    String
-  supplier      Supplier              @relation(fields: [supplierId], references: [id])
+  supplier      Supplier @relation(fields: [supplierId], references: [id])
+  companyId     String?
+  company       Company? @relation(fields: [companyId], references: [id])
   invoiceDate   DateTime
-  subtotal      Decimal               @default(0) @db.Decimal(14, 2)
-  taxAmount     Decimal               @default(0) @db.Decimal(14, 2)
-  totalAmount   Decimal               @db.Decimal(14, 2)
-  notes         String?
-  items         PurchaseInvoiceItem[]
-  files         File[]
-  createdById   String
-  createdBy     User                  @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
+  subtotal      Decimal  @default(0) @db.Decimal(14, 2)
+  taxAmount     Decimal  @default(0) @db.Decimal(14, 2)
+  totalAmount   Decimal  @db.Decimal(14, 2)
+
+  /// Set at posting time from Supplier.state vs Company.state — never
+  /// guessed, and posting refuses to proceed while this is null. The header
+  /// only captures one blended taxAmount (OCR extraction asks for a single
+  /// tax figure, not a rate or HSN per line, unlike the sales side's
+  /// TaxRate-driven split), so ITC is split proportionally from that one
+  /// figure rather than computed line-by-line. A true per-line HSN/rate
+  /// capture on the purchase side is a real gap, not a design choice — it
+  /// would need the OCR schema in purchases/actions.ts extended first.
+  isInterState Boolean?
+  cgstAmount   Decimal  @default(0) @db.Decimal(14, 2)
+  sgstAmount   Decimal  @default(0) @db.Decimal(14, 2)
+  igstAmount   Decimal  @default(0) @db.Decimal(14, 2)
+
+  status PurchaseInvoiceStatus @default(DRAFT)
+
+  postedEntryId String?   @unique
+  postedAt      DateTime?
+  cancelledAt   DateTime?
+
+  notes       String?
+  items       PurchaseInvoiceItem[]
+  files       File[]
+  allocations SupplierPaymentAllocation[]
+  createdById String
+  createdBy   User                        @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
 
   /// Re-entering the same invoice for the same supplier is a mistake, and
   /// the likeliest one when invoices are captured by photographing them.
   @@unique([supplierId, invoiceNumber])
   @@index([invoiceDate])
+  @@index([status])
 }
 
 model PurchaseInvoiceItem {
@@ -1084,6 +1130,9 @@ model Company {
   salesInvoices    SalesInvoice[]
   receipts         Receipt[]
   creditNotes      CreditNote[]
+  purchaseInvoices PurchaseInvoice[]
+  supplierPayments SupplierPayment[]
+  expenses         Expense[]
 }
 
 /// A node in the chart of accounts.
@@ -1118,9 +1167,12 @@ model LedgerAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines           JournalLine[]
-  mappings        AccountMapping[]
-  receiptDeposits Receipt[]        @relation("ReceiptDeposit")
+  lines                  JournalLine[]
+  mappings               AccountMapping[]
+  receiptDeposits        Receipt[]         @relation("ReceiptDeposit")
+  supplierPaymentsSource SupplierPayment[] @relation("SupplierPaymentSource")
+  expenseCategoryFor     Expense[]         @relation("ExpenseCategory")
+  expensePaymentsSource  Expense[]         @relation("ExpensePaymentSource")
 
   @@index([type])
   @@index([parentId])
@@ -1649,4 +1701,135 @@ model CreditNoteItem {
   lineNumber Int
 
   @@index([creditNoteId])
+}
+
+// ============================================================
+// ACCOUNTING — purchases and expenses (Phase 3)
+//
+// PurchaseInvoice already existed (the OCR-intake "photograph a supplier's
+// invoice" flow) and is extended above rather than duplicated into a new
+// SupplierBill model — it already is that document. What Phase 3 adds is
+// what happens after it's captured: posting it to the ledger, paying it
+// down, and a lighter-weight path for outgo that never runs through a
+// supplier ledger at all.
+//
+// Deliberately deferred: purchase orders and goods-receipt notes. Neither
+// concept exists anywhere in this schema today (unlike the sales side, where
+// Order already existed before this work started), and inventing a PO/GRN
+// workflow with no evidenced current usage would be speculative scope, not a
+// gap-fill. See docs/ACCOUNTING_IMPLEMENTATION_PLAN.md.
+// ============================================================
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  /// Posted and paid, in one step. Expenses here are the "petty cash paid
+  /// same day" kind — rent, electricity, a courier bill — never on account.
+  /// Outgo owed to a party for longer than that is a PurchaseInvoice, which
+  /// already carries proper AP tracking; Expense deliberately does not
+  /// duplicate that.
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+/// Money paid to a supplier, allocated across their invoices. Mirrors
+/// Receipt/ReceiptAllocation on the AR side exactly, direction reversed.
+model SupplierPayment {
+  id            String  @id @default(cuid())
+  paymentNumber String  @unique
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+
+  paymentDate DateTime
+  amount      Decimal  @db.Decimal(14, 2)
+
+  method    PaymentMethod
+  reference String?
+
+  /// The cash/bank account the money left from.
+  paymentAccountId String
+  paymentAccount   LedgerAccount @relation("SupplierPaymentSource", fields: [paymentAccountId], references: [id])
+
+  status ReceiptStatus @default(POSTED)
+  notes  String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("SupplierPaymentCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations SupplierPaymentAllocation[]
+
+  @@index([supplierId])
+  @@index([paymentDate])
+  @@index([status])
+}
+
+model SupplierPaymentAllocation {
+  id        String          @id @default(cuid())
+  paymentId String
+  payment   SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  invoiceId String
+  invoice   PurchaseInvoice @relation(fields: [invoiceId], references: [id])
+
+  amount Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([paymentId, invoiceId])
+  @@index([invoiceId])
+}
+
+/// A simple, immediately-paid outgo — rent, electricity, travel, a courier
+/// bill. Approval and posting happen in the same step: APPROVED means paid,
+/// not "owed and paid later" (see the enum's comment). `payeeName` is free
+/// text rather than a Supplier FK on purpose — most expenses have no ongoing
+/// account relationship worth a full supplier record.
+model Expense {
+  id            String  @id @default(cuid())
+  expenseNumber String  @unique
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+
+  expenseDate       DateTime
+  categoryAccountId String
+  categoryAccount   LedgerAccount @relation("ExpenseCategory", fields: [categoryAccountId], references: [id])
+
+  payeeName   String
+  description String?
+  amount      Decimal @db.Decimal(14, 2)
+
+  method           PaymentMethod
+  /// The cash/bank account the money left from.
+  paymentAccountId String
+  paymentAccount   LedgerAccount @relation("ExpensePaymentSource", fields: [paymentAccountId], references: [id])
+
+  status ExpenseStatus @default(DRAFT)
+
+  submittedAt    DateTime?
+  approvedById   String?
+  approvedBy     User?     @relation("ExpenseApprover", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  rejectedReason String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("ExpenseCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([expenseDate])
+  @@index([categoryAccountId])
 }

@@ -8,8 +8,9 @@ holds a matrix of **18 modules x 4 actions x 5 roles**, every cell a scope of
 missing cell is a compile error, which is why adding a module means filling all
 five role rows rather than only the one being tested.
 
-Four modules were added: `accounting` (the ledger — chart of accounts, journal,
-periods), `invoices`, `payments`, `gst`.
+Five modules were added: `accounting` (the ledger — chart of accounts, journal,
+periods), `invoices`, `payments`, `gst` (Phase 1), and `expenses` (Phase 3).
+`purchases` already existed and gained an `approve` action.
 
 | Module | SUPER_ADMIN | SALES_MANAGER | SALES_EXECUTIVE | DISTRIBUTOR_MANAGER | ACCOUNTS_TEAM |
 |---|---|---|---|---|---|
@@ -32,13 +33,19 @@ a stated fact rather than an omission.
 
 ## Deletion
 
-`accounting.delete`, `invoices.delete` and `payments.delete` are `"none"` for
-**every** role, Super Admin included.
+`accounting.delete`, `invoices.delete`, `payments.delete`, `purchases.delete`
+and `expenses.delete` are `"none"` for **every** role, Super Admin included.
 
 This is the one place the repo's "delete is Super Admin only" convention is
 tightened rather than relaxed. A posted journal entry is corrected by a linked
 reversing entry; there is no code path that removes one, and no role that could
 authorise it if there were.
+
+`purchases` was tightened in Phase 3, not added there — the module already
+existed with a blanket `FULL` grant for Super Admin (which includes delete).
+Once `PurchaseInvoice` could carry a `postedEntryId` into the immutable
+ledger, that pre-existing grant became a way to orphan a ledger-linked row in
+a way it never could before. Caught by a regression test, not by inspection.
 
 ## Separation of duties
 
@@ -103,6 +110,17 @@ accepts it, though no accounting call site passes one yet.
 Enforcement is in the posting service, not the UI. Hiding the button is not the
 control — `postJournalEntry()` re-reads the period status inside the
 transaction and rejects.
+
+## Separation of duties in practice: expenses
+
+`Expense`'s `DRAFT → SUBMITTED → APPROVED` workflow is the first place
+`assertCanApprove()` is exercised end to end, not just tested in isolation.
+`approveExpenseAction()` (`src/app/(dashboard)/expenses/actions.ts`) calls it
+before calling `approveExpense()`, so a submitter attempting to approve their
+own expense is refused at the Server Action boundary — the same place every
+other authorization check in this codebase happens — rather than relying on
+the UI hiding the Approve button (`expenses/[expenseId]/page.tsx` does hide
+it, but that is a UX courtesy, not the control).
 
 ## Known gaps
 

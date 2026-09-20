@@ -160,3 +160,19 @@ describe("scopedWhere(): the R2 regression", () => {
     expect(where.AND[1]).toEqual({ state: "Odisha" });
   });
 });
+
+describe("expenses module (Phase 3)", () => {
+  it("is visible only to finance roles, same as purchases", () => {
+    for (const role of ["SALES_MANAGER", "SALES_EXECUTIVE", "DISTRIBUTOR_MANAGER"] as const) {
+      expect(can(role, "expenses", "read")).toBe("none");
+    }
+    expect(can("SUPER_ADMIN", "expenses", "approve")).toBe("all");
+    expect(can("ACCOUNTS_TEAM", "expenses", "approve")).toBe("all");
+  });
+
+  it("grants no delete on expenses, matching the ledger's append-only rule", () => {
+    for (const role of ROLES) {
+      expect(can(role, "expenses", "delete")).toBe("none");
+    }
+  });
+});

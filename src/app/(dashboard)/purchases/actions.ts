@@ -267,3 +267,85 @@ export async function createPurchaseInvoice(
     throw err;
   }
 }
+
+// ---------------------------------------------------------------------
+// Phase 3: posting a captured invoice to the ledger, paying it down, and
+// the one small gap that blocks posting when a supplier has no state.
+// ---------------------------------------------------------------------
+
+import {
+  postPurchaseInvoice, cancelPurchaseInvoice, PurchasePostingError,
+} from "@/lib/accounting/purchase-posting";
+
+export async function postPurchaseInvoiceAction(
+  invoiceId: string,
+): Promise<{ error: string } | { success: true }> {
+  const user = await requireUser();
+  assertCan(user.role, "purchases", "write");
+
+  try {
+    await postPurchaseInvoice({ invoiceId, postedById: user.id });
+    revalidatePath("/purchases");
+    revalidatePath(`/purchases/${invoiceId}`);
+    revalidatePath("/accounting/journal");
+    return { success: true };
+  } catch (err) {
+    if (err instanceof PurchasePostingError) return { error: err.message };
+    throw err;
+  }
+}
+
+export async function cancelPurchaseInvoiceAction(
+  invoiceId: string,
+  input: { reason: string },
+): Promise<{ error: string } | { success: true }> {
+  const user = await requireUser();
+  assertCan(user.role, "purchases", "approve");
+
+  if (input.reason.trim().length < 3) return { error: "Give a reason for cancelling." };
+
+  try {
+    await cancelPurchaseInvoice({ invoiceId, reason: input.reason, cancelledById: user.id });
+    revalidatePath("/purchases");
+    revalidatePath(`/purchases/${invoiceId}`);
+    revalidatePath("/accounting/journal");
+    return { success: true };
+  } catch (err) {
+    if (err instanceof PurchasePostingError) return { error: err.message };
+    throw err;
+  }
+}
+
+/**
+ * The one gap that blocks posting: OCR never extracts a supplier's state,
+ * and there is no supplier edit UI at all. This fills the single field
+ * postPurchaseInvoice() actually needs (it decides CGST+SGST vs IGST) rather
+ * than building a full supplier CRUD screen for one field.
+ */
+export async function setSupplierStateAction(
+  supplierId: string,
+  state: string,
+): Promise<{ error: string } | { success: true }> {
+  const user = await requireUser();
+  assertCan(user.role, "purchases", "write");
+
+  const trimmed = state.trim();
+  if (!trimmed) return { error: "State is required." };
+
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
+  if (!supplier) return { error: "Supplier not found." };
+
+  await prisma.supplier.update({ where: { id: supplierId }, data: { state: trimmed } });
+
+  await logAudit({
+    userId: user.id,
+    action: "UPDATE",
+    entityType: "Supplier",
+    entityId: supplierId,
+    oldValue: { state: supplier.state },
+    newValue: { state: trimmed },
+  });
+
+  revalidatePath("/purchases");
+  return { success: true };
+}

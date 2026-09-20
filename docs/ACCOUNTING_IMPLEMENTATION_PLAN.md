@@ -122,11 +122,84 @@ The code is real and tested against synthetic fixtures and now against the
 two real orders in production; **switching it on for a customer-facing
 invoice is still Urvar's data task, not an engineering one.**
 
-## Phase 3 — purchases and expenses
+## Phase 3 — purchases and expenses · **DONE (core)**
 
-PO → GRN → `SupplierBill` → `SupplierPayment`, expense approval workflow,
-supplier ledger, AP ageing, ITC tracking. This is where the `approve` action
-gets its first real use.
+Migration `20260920053955_purchases_and_expenses`, strictly additive:
+`PurchaseInvoice` gains 9 nullable/defaulted columns (status, posting link,
+CGST/SGST/IGST split), plus three new tables — `SupplierPayment`,
+`SupplierPaymentAllocation`, `Expense` — and two new enums.
+
+**Scope decision, made explicit up front:** `PurchaseInvoice` already existed
+(the OCR-intake "photograph a supplier's invoice" flow) and is extended in
+place rather than duplicated into a new `SupplierBill` model — it already is
+that document. **PO and GRN are deliberately not built.** Neither concept
+exists anywhere in this schema, unlike the sales side where `Order` already
+existed before Phase 2 started; inventing a purchase-order/goods-receipt
+workflow with zero evidenced current usage would be speculative scope, not a
+gap-fill, and the brief's own rule against a second source of truth cuts the
+same way here as it did for choosing not to duplicate `PurchaseInvoice`.
+
+**Delivered:**
+- `src/lib/accounting/purchase-posting.ts` — `postPurchaseInvoice()` is a
+  deliberately separate step from creating the invoice (unlike the sales
+  side, which posts at creation): OCR-extracted data is captured as `DRAFT`
+  first, a person reviews it, and only then does it post. Splits the header's
+  one blended `taxAmount` into CGST+SGST or IGST from `Supplier.state` vs
+  `Company.state`, refusing to post while the supplier's state is unset
+  rather than guessing (7 tests, including a rounding-drift fold so the split
+  always sums exactly to the header figure).
+- `src/lib/accounting/supplier-payments.ts` — `recordSupplierPayment()`
+  mirrors `receipts.ts` exactly, direction reversed: allocates across
+  invoices with an over-allocation guard, routes any unallocated remainder to
+  `ADVANCE_TO_SUPPLIER` (8 tests).
+- `src/lib/accounting/payables.ts` — `supplierPayable()` derives AP the same
+  way `receivables.ts` derives AR (5 tests).
+- `src/lib/accounting/expenses.ts` — a **separate, simpler path** for
+  immediately-paid outgo (rent, electricity, a courier bill) that never
+  touches a supplier ledger: `DRAFT → SUBMITTED → APPROVED`, where approval
+  and posting happen in the same step (documented on `ExpenseStatus` — this
+  is genuinely different from `PurchaseInvoice`, not a shortcut). This is
+  where `assertCanApprove()`'s separation-of-duties check gets its first real
+  exercise: a submitter cannot approve their own expense unless they hold the
+  Super Admin exemption (11 tests).
+- New `expenses` RBAC module, finance-only like `purchases`, with `approve`
+  filled for all 5 roles. Tightened `purchases.delete` and `expenses.delete`
+  to `"none"` for **every** role including `SUPER_ADMIN` — `PurchaseInvoice`
+  can now carry a `postedEntryId` into the immutable ledger, so the
+  pre-existing `purchases: FULL` grant for Super Admin would have let it
+  delete a ledger-linked row, which every other financial module already
+  refuses (regression test added).
+- One small, real gap closed along the way: no supplier edit UI existed at
+  all, and OCR never extracts a supplier's state. Rather than build full
+  supplier CRUD, `setSupplierStateAction` + an inline form on the invoice
+  detail page fills the one field posting actually needs.
+- `/purchases/[invoiceId]` (didn't exist before — the list page had unlinked
+  rows), `/supplier-payments`, `/supplier-payments/[paymentId]`,
+  `/supplier-payments/new`, `/expenses`, `/expenses/[expenseId]`,
+  `/expenses/new`, with `/api/suppliers/[supplierId]/open-invoices` for
+  payment allocation.
+- Fixed two audit-log filter gaps found while doing this pass: `SalesInvoice`
+  and `Receipt` (Phase 2's own `logAudit()` call sites) were never added to
+  the filterable entity-type list either.
+
+**33 new tests (142 total).** No new transaction-detection or round-off bugs
+this time — `expenses.ts` was designed with the optional-`tx` pattern from
+the start based on Phase 2's lesson, and the round-off-fold logic in
+`postPurchaseInvoice` (correcting an odd-paisa drift into SGST) passed on
+first run.
+
+**Explicitly not done:**
+- Purchase orders and goods-receipt notes — see the scope decision above.
+- AP ageing report UI — `supplierPayable()` gives the number; a dated
+  buckets view is straightforward but not yet built, matching AR ageing's
+  same deferral in Phase 2.
+- Per-line HSN/rate capture on purchase invoices — the OCR schema in
+  `purchases/actions.ts` asks for one blended tax figure, not a rate or HSN
+  per line, so ITC is split proportionally rather than computed line-by-line
+  the way sales tax is. A true fix means extending the OCR extraction
+  schema, not something to improvise in the posting layer.
+- Expense receipt/bill attachment — `File` already has a
+  `relatedPurchaseInvoiceId` pattern to copy, but wiring it up wasn't done.
 
 ## Phase 4 — inventory and costing · **blocked on a decision**
 

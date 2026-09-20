@@ -7,9 +7,9 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-109 tests across eight files (62 from Phase 1, 47 added in Phase 2). This is
-the repo's first automated test suite; everything outside
-`src/lib/accounting/` still has no coverage.
+142 tests across twelve files (62 from Phase 1, 47 added in Phase 2, 33 added
+in Phase 3). This is the repo's first automated test suite; everything
+outside `src/lib/accounting/` still has no coverage.
 
 ## The constraint that shapes everything
 
@@ -103,6 +103,43 @@ The invariants that make the ledger trustworthy:
   changed here. The only shared file touched is `src/lib/audit.ts`, whose
   signature change is backwards-compatible, and the project-wide typecheck
   (which covers `voice-agent/**`) is clean.
+
+## Phase 3 coverage (implemented)
+
+### `tests/purchase-posting.test.ts` — 7 tests
+Intra-state CGST+SGST split and a balanced entry; an odd-paisa rounding drift
+folded into SGST so the split always sums exactly to the header tax figure
+(this is the test analogous to Phase 2's round-off catch — it passed first
+try, but is exactly the shape of bug that class of test exists to catch);
+inter-state IGST; refusing to post while the supplier has no state; refusing
+to re-post an already-posted invoice; cancellation reversing the entry; and
+refusing to cancel while a payment is allocated.
+
+### `tests/supplier-payments.test.ts` — 8 tests
+Full and partial payment reaching PAID/PARTIALLY_PAID; refusing over-
+allocation past the outstanding amount; refusing allocation against a DRAFT
+(unposted) invoice; refusing cross-supplier allocation; a zero-amount guard;
+over-payment routing to `ADVANCE_TO_SUPPLIER` with a balanced entry; and
+cancellation reversing the entry and reopening the invoice.
+
+### `tests/expenses.test.ts` — 11 tests
+Creation validation (zero amount, non-EXPENSE category account, grouping
+account refused); approval posting a balanced entry debiting the category and
+crediting the payment account; refusing to approve a non-SUBMITTED expense;
+**separation of duties** — a submitter cannot approve their own expense
+unless they hold the Super Admin exemption, tested both ways; rejection
+leaving no posting behind; and cancellation reversing an approved expense's
+entry.
+
+### `tests/payables.test.ts` — 5 tests
+`supplierPayable()` at zero/full/partial/other-supplier states, mirroring
+`receivables.test.ts` on the AR side; `allSupplierPayables()` listing only
+suppliers with a non-zero balance.
+
+### `tests/permissions.test.ts` additions — 2 tests
+The new `expenses` module is invisible to sales roles and grants no delete
+to any role, including `SUPER_ADMIN` — the same append-only rule as every
+other ledger-touching module.
 
 ## Phase 2 coverage (implemented)
 

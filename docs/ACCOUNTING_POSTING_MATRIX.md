@@ -93,35 +93,51 @@ are flagged so they are excluded from output tax registers for the same
 reason. `OPENING_BALANCE_EQUITY` should net to zero once the opening trial
 balance is complete.
 
-## Phase 3 — purchase side (designed, not yet built)
+## Phase 3 — purchase side · implemented (`src/lib/accounting/purchase-posting.ts`, `supplier-payments.ts`, `expenses.ts`)
 
-### Supplier bill (goods for resale, ITC claimable)
+### Supplier bill (`postPurchaseInvoice()`)
 
 | Account | Dr | Cr |
 |---|---|---|
-| `PURCHASES` or `INVENTORY_*` | Taxable value | |
-| `GST_INPUT_CGST` / `SGST`, or `GST_INPUT_IGST` | Input tax | |
+| `PURCHASES` | Header subtotal | |
+| `GST_INPUT_CGST` + `GST_INPUT_SGST` (intra-state) or `GST_INPUT_IGST` (inter-state) | Header tax, split from Supplier.state vs Company.state | |
 | `AP_TRADE` (party: supplier) | | Bill total |
 
-Whether the debit is `PURCHASES` (expense) or `INVENTORY_*` (asset) depends on
-the costing decision deferred to Phase 4. Not every purchase is an expense —
-that classification is per-line, not per-bill.
+Everything debits `PURCHASES` today — `INVENTORY_*` is not used, since the
+costing decision is deferred to Phase 4 (see below). The tax split is
+proportional from one header figure, not computed line-by-line: the OCR
+intake schema captures a single blended `taxAmount`, not a rate or HSN per
+line, unlike the sales side's `TaxRate`-driven per-line split. Posting refuses
+when the supplier has no state on file rather than guessing intra- vs
+inter-state.
 
-### Supplier payment
+### Supplier payment (`recordSupplierPayment()`)
 
 | Account | Dr | Cr |
 |---|---|---|
 | `AP_TRADE` (party: supplier) | Amount allocated | |
 | `ADVANCE_TO_SUPPLIER` (party: supplier) | Unallocated remainder | |
-| `BANK_DEFAULT` or `CASH_ON_HAND` | | Amount paid |
+| The chosen cash/bank `LedgerAccount` | | Amount paid |
 
-### Expense
+Mirrors `Receipt` exactly, direction reversed. Refuses to allocate against a
+`DRAFT` (unposted) or `CANCELLED` invoice, and refuses to allocate more than
+an invoice's true outstanding amount (derived from posted lines, never a
+stored balance).
+
+### Expense (`approveExpense()`) — a deliberately different shape
 
 | Account | Dr | Cr |
 |---|---|---|
-| The mapped expense account | Net amount | |
-| `GST_INPUT_*` | Input tax, where claimable | |
-| `BANK_DEFAULT` / `CASH_ON_HAND` / `AP_TRADE` | | Total |
+| The submitter's chosen expense category account | Amount | |
+| The chosen cash/bank `LedgerAccount` | | Amount |
+
+No GST input line and no AP line: `Expense` is scoped to immediately-paid
+outgo — rent, electricity, a courier bill — that never carries an ongoing
+balance for a party. Outgo that should be tracked against a specific supplier
+over time is a `PurchaseInvoice`, which already has full AP tracking; adding
+that here would duplicate it. Approval and posting are the same step by
+design (see `ExpenseStatus` in the schema) — there is no
+`APPROVED-but-unpaid` state to represent.
 
 ## Phase 4 — inventory (blocked on a decision)
 

@@ -28,6 +28,7 @@ export const DOCUMENT_TYPES = {
   CREDIT_NOTE: "CREDIT_NOTE",
   DEBIT_NOTE: "DEBIT_NOTE",
   SUPPLIER_PAYMENT: "SUPPLIER_PAYMENT",
+  EXPENSE: "EXPENSE",
 } as const;
 
 export type DocumentType = (typeof DOCUMENT_TYPES)[keyof typeof DOCUMENT_TYPES];
@@ -40,6 +41,7 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   CREDIT_NOTE: "CRN",
   DEBIT_NOTE: "DBN",
   SUPPLIER_PAYMENT: "SPY",
+  EXPENSE: "EXP",
 };
 
 export type AllocateArgs = {

@@ -6,6 +6,7 @@ import { assertCan, can } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -54,6 +55,7 @@ export default async function PurchasesPage({
         invoiceNumber: true,
         invoiceDate: true,
         totalAmount: true,
+        status: true,
         supplier: { select: { name: true, supplierCode: true } },
         _count: { select: { items: true } },
       },
@@ -97,6 +99,7 @@ export default async function PurchasesPage({
                     <TableHead>Invoice</TableHead>
                     <TableHead>Supplier</TableHead>
                     <TableHead>Date</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Lines</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                   </TableRow>
@@ -104,7 +107,11 @@ export default async function PurchasesPage({
                 <TableBody>
                   {invoices.map((invoice) => (
                     <TableRow key={invoice.id}>
-                      <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                      <TableCell className="font-medium">
+                        <Link href={`/purchases/${invoice.id}`} className="underline">
+                          {invoice.invoiceNumber}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         {invoice.supplier.name}
                         <span className="block text-xs text-muted-foreground">
@@ -112,6 +119,11 @@ export default async function PurchasesPage({
                         </span>
                       </TableCell>
                       <TableCell>{invoice.invoiceDate.toLocaleDateString("en-IN")}</TableCell>
+                      <TableCell>
+                        <Badge variant={invoice.status === "DRAFT" ? "secondary" : "default"}>
+                          {invoice.status}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {invoice._count.items}
                       </TableCell>

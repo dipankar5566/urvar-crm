@@ -34,7 +34,12 @@ export type Module =
   | "accounting"
   | "invoices"
   | "payments"
-  | "gst";
+  | "gst"
+  // Phase 3: expense approval workflow. Separate from `purchases` (supplier
+  // bills, which already existed) because expenses have their own
+  // separation-of-duties requirement — submit != approve — and mixing the
+  // two would force purchases' RBAC history to be reinterpreted.
+  | "expenses";
 
 /**
  * `approve` exists for separation of duties on financial documents: the right
@@ -69,7 +74,13 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     customers: FULL,
     quotations: FULL,
     products: FULL,
-    purchases: FULL,
+    // Not FULL for either: once a PurchaseInvoice or Expense is posted, it
+    // carries a postedEntryId into the immutable ledger (see accounting's
+    // delete: "none" above) — deleting the row would orphan that entry.
+    // Correction is cancelPurchaseInvoice()/cancelExpense(), a reversal,
+    // never a delete, for every role including Super Admin.
+    purchases: { read: "all", write: "all", delete: "none", approve: "all" },
+    expenses: { read: "all", write: "all", delete: "none", approve: "all" },
     field_visits: FULL,
     reports: READ_ALL,
     users: FULL,
@@ -98,6 +109,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     // Supplier prices reveal margin: a sales role that can see both the
     // purchase price and the quoted price knows the markup on every deal.
     purchases: NONE,
+    expenses: NONE,
     // Reads every rep's visits — the point of check-ins is oversight — but
     // cannot delete one, so the record of who was where cannot be rewritten.
     field_visits: { read: "all", write: "all", delete: "none", approve: "none" },
@@ -122,6 +134,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     quotations: OWN_RW,
     products: READ_ALL,
     purchases: NONE,
+    expenses: NONE,
     field_visits: OWN_RW,
     reports: { read: "own", write: "none", delete: "none", approve: "none" },
     users: NONE,
@@ -145,6 +158,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     quotations: TERRITORY_R,
     products: READ_ALL,
     purchases: NONE,
+    expenses: NONE,
     field_visits: { read: "own", write: "own", delete: "none", approve: "none" },
     reports: TERRITORY_R,
     users: NONE,
@@ -166,6 +180,11 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     products: READ_ALL,
     // Procurement is finance's job — deleting an invoice is not, so no delete.
     purchases: { read: "all", write: "all", delete: "none", approve: "none" },
+    // approve: "all" — this is the module the DRAFT->SUBMITTED->APPROVED
+    // workflow actually exercises. assertCanApprove() still blocks a user
+    // approving their own submission unless they hold the Super Admin
+    // exemption, so the role grant alone is not the whole control.
+    expenses: { read: "all", write: "all", delete: "none", approve: "all" },
     // Field visits are a sales-supervision record with nothing financial in
     // them; accounts has no reason to see which rep stood where.
     field_visits: NONE,

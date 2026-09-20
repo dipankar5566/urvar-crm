@@ -30,6 +30,15 @@ const ENTITY_TYPES = [
   "FieldVisit",
   "JournalEntry",
   "FinancialPeriod",
+  // Phase 2 added these logAudit() call sites but never added them here —
+  // the rows existed and were unfilterable. Caught while doing the Phase 3
+  // pass below; fixed alongside it rather than left for a fourth pass.
+  "SalesInvoice",
+  "Receipt",
+  // Phase 3.
+  "SupplierPayment",
+  "Expense",
+  "Supplier",
 ];
 const ACTIONS = [
   "CREATE",
@@ -51,6 +60,8 @@ const ACTIONS = [
   "REOPEN_PERIOD",
   "LOCK_PERIOD",
   "OPEN_FINANCIAL_YEAR",
+  "APPROVE",
+  "REJECT",
 ];
 
 export default async function AuditLogsPage({
