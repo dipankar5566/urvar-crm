@@ -25,6 +25,10 @@ export default async function InvoiceDetailPage({
 }) {
   const user = await requireUser();
   const scope = can(user.role, "invoices", "read");
+  // Margin reveals cost, the same reason the `purchases` module is hidden
+  // from sales roles — gate the column on accounting access, not invoice
+  // access, so a rep who can see their own invoice still can't see its cost.
+  const canSeeMargin = can(user.role, "accounting", "read") !== "none";
   const { invoiceId } = await params;
 
   const invoice = await prisma.salesInvoice.findFirst({
@@ -70,6 +74,7 @@ export default async function InvoiceDetailPage({
                   <TableHead className="text-right">Taxable</TableHead>
                   <TableHead className="text-right">Tax</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  {canSeeMargin && <TableHead className="text-right">Est. Margin</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -90,6 +95,13 @@ export default async function InvoiceDetailPage({
                     <TableCell className="text-right tabular-nums font-medium">
                       {formatInr(item.lineTotal)}
                     </TableCell>
+                    {canSeeMargin && (
+                      <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
+                        {item.estimatedCostAmount
+                          ? formatInr(item.taxableValue.minus(item.estimatedCostAmount))
+                          : "cost unknown"}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

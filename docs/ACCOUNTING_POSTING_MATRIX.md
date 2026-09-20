@@ -139,21 +139,48 @@ that here would duplicate it. Approval and posting are the same step by
 design (see `ExpenseStatus` in the schema) — there is no
 `APPROVED-but-unpaid` state to represent.
 
-## Phase 4 — inventory (blocked on a decision)
+## Phase 4 — inventory · implemented (`src/lib/accounting/stock-valuation.ts`)
 
-COGS needs cost, and the ERP's two exposed views
-(`erp_foreign.v_stock_available`, `v_product_catalog`) carry quantity only.
-Either the ERP view contract gains a costed view, or the CRM derives a
-weighted average from `PurchaseInvoiceItem`. Until that is settled, the
-`INVENTORY_*` and `COGS` accounts exist and take no postings.
+Periodic, not perpetual: `PURCHASES` still takes the full debit at posting
+time (unchanged from Phase 3), so `StockValuation` is a period-end adjustment,
+not a per-invoice entry. On-hand quantity is entered by a person (physical
+count or an ERP report) — the ERP's `postgres_fdw` contract for reading it
+live has never been wired into the production database (checked directly:
+no foreign tables exist), so this stays out of scope rather than guessed at.
 
-Intended shape once decided:
+### Closing-stock valuation (`postStockValuation()`)
 
-| Event | Dr | Cr |
+| Account | Dr | Cr |
 |---|---|---|
-| Goods received | `INVENTORY_*` | `AP_TRADE` |
-| Goods despatched | `COGS` | `INVENTORY_FINISHED_GOODS` |
-| Production output | `INVENTORY_FINISHED_GOODS` | `INVENTORY_RAW_MATERIAL` + direct costs |
+| `INVENTORY_FINISHED_GOODS` | This period's closing value | |
+| `COGS` | | This period's closing value |
+
+Before posting the above, if an earlier period already has a POSTED
+valuation, its entry is reversed first — dated at **this period's start**,
+via `reverseJournalEntry()`'s `reversalDate` parameter (built for exactly
+this "the original period may already be closed" case) — so last period's
+closing stock becomes this period's opening stock, the standard
+trading-account roll-forward:
+
+| Account | Dr | Cr |
+|---|---|---|
+| `COGS` | Previous period's closing value | |
+| `INVENTORY_FINISHED_GOODS` | | Previous period's closing value |
+
+Unit cost per line is a weighted average of `PurchaseInvoiceItem` history
+(`costing.ts`) as of the valuation date, or an explicit manual override. A
+product with neither is refused — the system never invents a cost. Cancelling
+a POSTED valuation reverses it the same way and is refused once a later
+period's valuation has already superseded it (unwind in period order, same
+rule every other reversal-based document here follows).
+
+### Per-invoice margin snapshot — informational only, never posted
+
+`SalesInvoiceItem.estimatedUnitCost`/`estimatedCostAmount` are set at invoice
+creation from the same weighted-average function, purely for display (the
+invoice detail page, gated behind `accounting` read access). They never
+appear in any `JournalLine` — COGS reaches the ledger only through the
+period-end valuation above.
 
 ## Adding a transaction type
 

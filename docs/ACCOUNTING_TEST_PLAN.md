@@ -7,9 +7,9 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-142 tests across twelve files (62 from Phase 1, 47 added in Phase 2, 33 added
-in Phase 3). This is the repo's first automated test suite; everything
-outside `src/lib/accounting/` still has no coverage.
+165 tests across fourteen files (62 from Phase 1, 47 added in Phase 2, 33
+added in Phase 3, 23 added in Phase 4). This is the repo's first automated
+test suite; everything outside `src/lib/accounting/` still has no coverage.
 
 ## The constraint that shapes everything
 
@@ -140,6 +140,36 @@ suppliers with a non-zero balance.
 The new `expenses` module is invisible to sales roles and grants no delete
 to any role, including `SUPER_ADMIN` — the same append-only rule as every
 other ledger-touching module.
+
+## Phase 4 coverage (implemented)
+
+### `tests/costing.test.ts` — 9 tests
+`weightedAverageCost()`: null with no purchase history; null while the only
+purchase is DRAFT; a CANCELLED invoice ignored; a single purchase returned
+exactly; multiple purchases at different price/quantity weighted correctly
+(the arithmetic case that actually proves the formula, not just that it
+returns *something*); PARTIALLY_PAID/PAID counted alongside POSTED; a
+purchase dated after the as-of date excluded. `weightedAverageCosts()`
+(batch): returns a cost only for products with history, keyed correctly;
+empty input returns an empty map.
+
+### `tests/stock-valuation.test.ts` — 14 tests
+`createStockValuation()`: a manual unit cost computes value correctly; the
+computed weighted average is used when no override is given (and stored at
+its full 4dp precision, not the 2dp money scale — the assertion for this one
+initially compared against the wrong scale and had to be fixed); a product
+with neither purchase history nor a manual cost is refused; a duplicate
+product in one valuation is refused; a second valuation for an
+already-valued period is refused; a negative quantity is refused.
+`deleteStockValuationDraft()`: a DRAFT deletes outright; a POSTED one is
+refused (cancel it instead). `postStockValuation()`: posts a balanced Dr
+Inventory / Cr COGS entry for the total value; refuses an empty valuation;
+refuses posting the same valuation twice; **reverses the previous period's
+posted valuation, dated at this period's start** — the roll-forward
+mechanism this phase's design actually depends on, so it's tested directly
+rather than assumed from the reversal primitive already being tested
+elsewhere. `cancelStockValuation()`: reverses a posted valuation; refuses to
+cancel one already superseded by a later period's posting.
 
 ## Phase 2 coverage (implemented)
 

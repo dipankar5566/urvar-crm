@@ -189,7 +189,15 @@ export async function testSupplier(
   });
 }
 
-/** A DRAFT purchase invoice with one line, ready to post. */
+/**
+ * A purchase invoice, DRAFT by default and ready to post.
+ *
+ * Pass `items` (each with a `productId`, `quantity`, `unitPrice`) for costing
+ * tests that need `PurchaseInvoiceItem` rows a real product can be averaged
+ * from — the default single generic line has no `productId` and is invisible
+ * to `weightedAverageCost`. Pass `status` to fixture an already-posted
+ * invoice directly, without exercising the real posting flow.
+ */
 export async function testPurchaseInvoice(
   tx: Prisma.TransactionClient,
   opts: {
@@ -200,12 +208,25 @@ export async function testPurchaseInvoice(
     taxAmount?: string | number;
     totalAmount?: string | number;
     invoiceNumber?: string;
+    status?: "DRAFT" | "POSTED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
+    items?: { productId?: string; quantity: string | number; unitPrice: string | number }[];
   },
 ) {
   const n = ++seq;
-  const subtotal = opts.subtotal ?? 1000;
+  const lineItems =
+    opts.items?.map((item) => ({
+      productId: item.productId,
+      description: "Test purchase line",
+      quantity: String(item.quantity),
+      unitPrice: String(item.unitPrice),
+      lineTotal: (Number(item.quantity) * Number(item.unitPrice)).toFixed(2),
+    })) ?? null;
+
+  const subtotal =
+    opts.subtotal ?? (lineItems ? lineItems.reduce((acc, l) => acc + Number(l.lineTotal), 0) : 1000);
   const taxAmount = opts.taxAmount ?? 50;
   const totalAmount = opts.totalAmount ?? (Number(subtotal) + Number(taxAmount));
+
   return tx.purchaseInvoice.create({
     data: {
       invoiceNumber: opts.invoiceNumber ?? `TEST-PINV-${Date.now()}-${n}`,
@@ -214,16 +235,19 @@ export async function testPurchaseInvoice(
       subtotal: String(subtotal),
       taxAmount: String(taxAmount),
       totalAmount: String(totalAmount),
+      status: opts.status ?? "DRAFT",
       createdById: opts.userId,
       items: {
-        create: [
-          {
-            description: "Test purchase line",
-            quantity: "1",
-            unitPrice: String(subtotal),
-            lineTotal: String(subtotal),
-          },
-        ],
+        create:
+          lineItems ??
+          [
+            {
+              description: "Test purchase line",
+              quantity: "1",
+              unitPrice: String(subtotal),
+              lineTotal: String(subtotal),
+            },
+          ],
       },
     },
   });

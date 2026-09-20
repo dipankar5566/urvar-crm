@@ -201,16 +201,53 @@ first run.
 - Expense receipt/bill attachment — `File` already has a
   `relatedPurchaseInvoiceId` pattern to copy, but wiring it up wasn't done.
 
-## Phase 4 — inventory and costing · **blocked on a decision**
+## Phase 4 — inventory and costing (done, 2026-09-20)
 
-The ERP exposes quantity but not cost. Either extend the ERP view contract with
-a costed view (cross-repo change) or derive a weighted average in the CRM from
-`PurchaseInvoiceItem`. Decide before building; the valuation method must be
-explicit and consistent, never mixed silently.
+Two decisions were needed before building, both confirmed explicitly rather
+than defaulted:
 
-Also fix, when wiring the FDW: the user mapping targets role `postgres` while
-the CRM connects as `urvar_app`, and `crm_reader_dev_pw` is hardcoded in a
-checked-in SQL file.
+1. **Costing method: CRM-side weighted average**, not a costed ERP view. Cost
+   is derived from `PurchaseInvoiceItem` (`src/lib/accounting/costing.ts`),
+   which excludes GST by construction (`lineTotal` is the pre-tax taxable
+   value) — the right basis for a registered regular taxpayer claiming ITC.
+2. **On-hand quantity stays out of scope.** Checked the live `urvar_crm`
+   database directly: `postgres_fdw` was never installed and no foreign
+   tables exist, so the ERP quantity contract (`phase2-erp-views.sql`/
+   `phase2-crm-fdw.sql` in `D:\urvar-erp`) is still just two `.sql` files, not
+   a live capability. Wiring it means installing `postgres_fdw` in production,
+   fixing two pre-existing bugs in those files first (the user mapping targets
+   role `postgres` while the CRM actually connects as `urvar_app`, and
+   `crm_reader_dev_pw` is hardcoded in a checked-in SQL file), and touching a
+   second live application's database — out of scope for a CRM feature
+   session. A human enters on-hand quantity instead (physical count or an ERP
+   report), same as Vyapar/Tally require without a perpetual stock ledger.
+
+**What this makes the costing model.** Purchases already post their full
+value to the P&L `Purchases` account at posting time
+(`purchase-posting.ts`, unchanged) — a periodic system, not perpetual. So
+Phase 4 adds a periodic **closing-stock valuation** rather than a per-invoice
+COGS posting: `StockValuation` + `StockValuationLine`
+(`src/lib/accounting/stock-valuation.ts`), one per `FinancialPeriod`. Posting
+one does two things in the same step: reverses the immediately preceding
+period's valuation (dated at this period's start, via the existing
+`reverseJournalEntry`'s `reversalDate` escape hatch — built for exactly this
+"the earlier period may already be closed" case) so last period's closing
+stock becomes this period's opening stock, then posts Dr
+`INVENTORY_FINISHED_GOODS` / Cr `COGS` for this period's value. Both accounts
+were forward-provisioned in Phase 1's chart of accounts specifically for this.
+
+A line's cost is the computed weighted average unless a manual override is
+given; a product with neither is refused outright — never defaulted to zero
+or another product's rate. `SalesInvoiceItem` also gained a nullable,
+informational-only `estimatedUnitCost`/`estimatedCostAmount` snapshot (never
+posted to the ledger) so a per-invoice margin figure is visible without
+waiting for period close; the invoice detail page shows it gated behind
+`accounting` read access, the same reason `purchases` is hidden from sales
+roles.
+
+UI: `/accounting/inventory` (list), `/accounting/inventory/new` (draft a
+valuation), `/accounting/inventory/[valuationId]` (review, post, cancel).
+23 new tests (`tests/costing.test.ts`, `tests/stock-valuation.test.ts`).
 
 ## Phase 5 — GST and reports
 

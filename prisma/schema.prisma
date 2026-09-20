@@ -281,6 +281,7 @@ model User {
   supplierPaymentsCreated SupplierPayment[]      @relation("SupplierPaymentCreator")
   expensesCreated         Expense[]              @relation("ExpenseCreator")
   expensesApproved        Expense[]              @relation("ExpenseApprover")
+  stockValuationsCreated  StockValuation[]       @relation("StockValuationCreator")
 
   @@index([role])
 }
@@ -657,10 +658,11 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  quotationItems    QuotationItem[]
-  purchaseItems     PurchaseInvoiceItem[]
-  orderItems        OrderItem[]
-  salesInvoiceItems SalesInvoiceItem[]
+  quotationItems     QuotationItem[]
+  purchaseItems      PurchaseInvoiceItem[]
+  orderItems         OrderItem[]
+  salesInvoiceItems  SalesInvoiceItem[]
+  stockValuationLines StockValuationLine[]
   creditNoteItems   CreditNoteItem[]
 
   @@index([category])
@@ -1133,6 +1135,7 @@ model Company {
   purchaseInvoices PurchaseInvoice[]
   supplierPayments SupplierPayment[]
   expenses         Expense[]
+  stockValuations  StockValuation[]
 }
 
 /// A node in the chart of accounts.
@@ -1205,7 +1208,8 @@ model FinancialPeriod {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  entries JournalEntry[]
+  entries         JournalEntry[]
+  stockValuation  StockValuation?
 
   @@unique([companyId, financialYear, periodNumber])
   @@index([startDate, endDate])
@@ -1551,6 +1555,14 @@ model SalesInvoiceItem {
   cessAmount     Decimal @default(0) @db.Decimal(14, 2)
   lineTotal      Decimal @db.Decimal(14, 2)
 
+  /// Informational margin snapshot, never posted to the ledger — this CRM
+  /// runs periodic (not perpetual) costing (see StockValuation above), so
+  /// COGS reaches the P&L at period close, not per invoice. Null whenever the
+  /// product has no purchase history yet to average a cost from; a null here
+  /// must never be read as "cost is zero."
+  estimatedUnitCost   Decimal? @db.Decimal(14, 4)
+  estimatedCostAmount Decimal? @db.Decimal(14, 2)
+
   lineNumber Int
 
   @@index([invoiceId])
@@ -1832,4 +1844,93 @@ model Expense {
   @@index([status])
   @@index([expenseDate])
   @@index([categoryAccountId])
+}
+
+// ============================================================
+// COSTING — periodic inventory valuation (Phase 4)
+//
+// The CRM does not track on-hand stock quantity — that lives in the ERP
+// (urvar_erp), read-only, and reading it live requires a postgres_fdw wire-up
+// across two production databases that has never actually been applied (see
+// docs/ACCOUNTING_IMPLEMENTATION_PLAN.md). So this is deliberately a
+// *periodic* costing model, the same one Vyapar and Tally use for a trading
+// business: Purchases already post straight to the P&L Purchases account
+// (src/lib/accounting/purchase-posting.ts) rather than to an inventory asset,
+// so COGS for the period is Opening Stock + Purchases - Closing Stock, and
+// Closing Stock is a period-end adjustment, not a per-invoice ledger entry.
+//
+// A human enters the on-hand quantity per product at period end (from a
+// physical count or an ERP report) — never invented or estimated by this
+// system. Unit cost is a weighted average of everything purchased to date
+// (src/lib/accounting/costing.ts), computed from PurchaseInvoiceItem, which
+// is the honest approximation available without a perpetual stock ledger.
+// ============================================================
+
+enum StockValuationStatus {
+  /// Being prepared; quantities and costs can still change.
+  DRAFT
+  /// Posted to the ledger: Dr Inventory, Cr COGS for the closing value, after
+  /// reversing whichever earlier valuation it supersedes (so last period's
+  /// closing stock becomes this period's opening stock, exactly as a manual
+  /// trading-account close would do it).
+  POSTED
+  CANCELLED
+}
+
+/// One period's closing-stock valuation. `periodId` is unique — a period is
+/// valued at most once; correcting a mistake cancels this one (which reverses
+/// its entry) and a new valuation is created, never edited in place once
+/// posted.
+model StockValuation {
+  id            String          @id @default(cuid())
+  companyId     String
+  company       Company         @relation(fields: [companyId], references: [id])
+  periodId      String          @unique
+  period        FinancialPeriod @relation(fields: [periodId], references: [id])
+  valuationDate DateTime
+
+  totalValue Decimal @db.Decimal(14, 2)
+  /// Where the quantities came from — a physical count, an ERP stock report
+  /// printout, etc. Free text because the source is a human's statement, not
+  /// a system fact this code can verify.
+  notes      String?
+
+  status        StockValuationStatus @default(DRAFT)
+  postedEntryId String?              @unique
+  postedAt      DateTime?
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("StockValuationCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines StockValuationLine[]
+
+  @@index([companyId])
+  @@index([status])
+}
+
+/// One product's quantity and cost within a valuation. `unitCost` carries
+/// more precision than a money amount (4dp, not 2) because a weighted average
+/// over many purchases is rarely a round paisa figure, and truncating it to
+/// 2dp before multiplying by quantity would compound into a real error at
+/// scale.
+model StockValuationLine {
+  id          String         @id @default(cuid())
+  valuationId String
+  valuation   StockValuation @relation(fields: [valuationId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product        @relation(fields: [productId], references: [id])
+
+  quantityOnHand Decimal @db.Decimal(12, 2)
+  unitCost       Decimal @db.Decimal(14, 4)
+  /// "WEIGHTED_AVERAGE" (computed from purchase history) or "MANUAL" (typed
+  /// in directly, because the product has no purchase history to average —
+  /// never silently defaulted to zero or another product's cost).
+  costSource     String
+  value          Decimal @db.Decimal(14, 2)
+
+  @@unique([valuationId, productId])
+  @@index([valuationId])
 }

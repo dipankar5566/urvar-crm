@@ -90,6 +90,17 @@ export function round(value: MoneyInput): Money {
 }
 
 /**
+ * Round to an arbitrary number of decimal places. Used where a rate or a
+ * unit cost is stored at finer precision than money itself (e.g. a weighted
+ * average cost, `Decimal(14,4)`) — rounding it explicitly here, once, is what
+ * "no unrounded arithmetic feeding a Decimal column" actually means for a
+ * column that isn't 2dp.
+ */
+export function roundToScale(value: MoneyInput, decimalPlaces: number): Money {
+  return money(value).toDecimalPlaces(decimalPlaces, ROUND_HALF_UP);
+}
+
+/**
  * Round to whole rupees, and report the adjustment.
  *
  * A GST invoice's grand total is customarily rounded to the nearest rupee

@@ -5,9 +5,10 @@ import { requireCompany } from "./company";
 import { financialYearOf } from "./fiscal";
 import { allocateDocumentNumber, DOCUMENT_TYPES } from "./numbering";
 import { resolveTaxRate, priceLine, isInterState, resolvePlaceOfSupply, TaxRateError } from "./tax";
-import { add, money, round, roundToRupee, sub, sum, toAmountString, type Money } from "./money";
+import { add, money, mul, round, roundToRupee, roundToScale, sub, sum, toAmountString, type Money } from "./money";
 import { logAudit } from "@/lib/audit";
 import { syncCustomerOutstanding } from "./receivables";
+import { weightedAverageCost } from "./costing";
 
 /**
  * Order -> Invoice conversion, and the posting that follows it.
@@ -80,7 +81,17 @@ async function prepareLine(
   }
   const rate = await resolveTaxRate(hsnCode, asOf, tx);
   const priced = priceLine({ quantity: qty, unitPrice: item.unitPrice }, rate, interState);
-  return { item, qty, hsnCode, unit: product?.unit ?? "unit", priced };
+
+  // Informational only — never posted to the ledger. This CRM runs periodic
+  // costing (see StockValuation), so COGS reaches the P&L at period close,
+  // not per invoice; this is purely a margin snapshot for the invoice's own
+  // record. Null when the product has no purchase history yet — never
+  // defaulted to zero, which would misreport margin as 100%.
+  const avgCost = item.productId ? await weightedAverageCost(item.productId, asOf, tx) : null;
+  const estimatedUnitCost = avgCost ? roundToScale(avgCost, 4) : null;
+  const estimatedCostAmount = estimatedUnitCost ? round(mul(qty, estimatedUnitCost)) : null;
+
+  return { item, qty, hsnCode, unit: product?.unit ?? "unit", priced, estimatedUnitCost, estimatedCostAmount };
 }
 
 /**
@@ -200,6 +211,8 @@ export async function createInvoiceFromOrder(
             igstAmount: p.priced.igstAmount,
             cessAmount: p.priced.cessAmount,
             lineTotal: p.priced.lineTotal,
+            estimatedUnitCost: p.estimatedUnitCost,
+            estimatedCostAmount: p.estimatedCostAmount,
             lineNumber: i + 1,
           })),
         },
