@@ -7,9 +7,10 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-165 tests across fourteen files (62 from Phase 1, 47 added in Phase 2, 33
-added in Phase 3, 23 added in Phase 4). This is the repo's first automated
-test suite; everything outside `src/lib/accounting/` still has no coverage.
+176 tests across fifteen files (62 from Phase 1, 47 added in Phase 2, 33
+added in Phase 3, 23 added in Phase 4, 11 added in Phase 5). This is the
+repo's first automated test suite; everything outside `src/lib/accounting/`
+still has no coverage.
 
 ## The constraint that shapes everything
 
@@ -204,3 +205,21 @@ idempotent; `reconcileOutstandingAmounts()` flagging a stale stored value
 Regression coverage for the R2 fix: `scopedWhere()` preserves both the scope
 restriction and a colliding request filter as separate AND branches, for
 `own`, `territory`, `none` and `all` scopes.
+
+## Phase 5 coverage (implemented)
+
+### `tests/financial-reports.test.ts` — 11 tests
+`trialBalance()`: debit and credit columns sum equal and show the posted
+amount on the correct side; a net-zero account is omitted. `generalLedger()`:
+an opening balance computed from activity before the range carries forward
+correctly into a running balance; **a reversed entry nets to zero only once
+the reversal date has passed** — the case that would have caught a
+status-based filtering bug before it shipped, not after. `profitAndLoss()`:
+revenue from a real posted sales invoice appears correctly and rolls into net
+profit; activity outside the date range is excluded. `balanceSheet()`:
+Assets = Liabilities + Equity after a real posting (not asserted as an
+assumption — computed and compared); cumulative net profit is folded into
+equity as Current Earnings. `gstTaxSummary()`: output tax from a sales
+invoice and input tax from a purchase invoice both compute correctly and net
+to the right payable figure. `gstOutwardSupplyRegister()`: a posted invoice's
+HSN and taxable value appear; a cancelled invoice is excluded.

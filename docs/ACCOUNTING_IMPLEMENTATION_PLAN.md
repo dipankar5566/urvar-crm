@@ -249,11 +249,44 @@ UI: `/accounting/inventory` (list), `/accounting/inventory/new` (draft a
 valuation), `/accounting/inventory/[valuationId]` (review, post, cancel).
 23 new tests (`tests/costing.test.ts`, `tests/stock-valuation.test.ts`).
 
-## Phase 5 — GST and reports
+## Phase 5 — GST and reports (done, 2026-09-20)
 
-GSTR-1/3B-oriented registers, Trial Balance, General Ledger, P&L, Balance
-Sheet, cash and bank books. All derived from posted journal lines, never from
-independent calculations. Requires accountant review.
+`src/lib/accounting/financial-reports.ts` — six read-only functions, all
+derived from posted `JournalLine` rows, never an independent calculation:
+`trialBalance`, `generalLedger` (doubles as the cash book or bank book when
+pointed at `CASH_ON_HAND`/`BANK_DEFAULT` — no separate implementation),
+`profitAndLoss`, `balanceSheet`, `gstTaxSummary` (output vs. input tax
+straight off the `GST_OUTPUT_*`/`GST_INPUT_*` ledger accounts), and
+`gstOutwardSupplyRegister` (line-level HSN detail from `SalesInvoiceItem`,
+for GSTR-1 preparation).
+
+One correctness point that would have been a real bug: `JournalEntry.status`
+flips to `REVERSED` on the original entry once it's reversed, but the
+original still genuinely happened — filtering reports to `status: "POSTED"`
+only would silently drop everything the original posted before its reversal
+date. Every function here filters by `entryDate` only, never by status
+(except excluding the unused `DRAFT`), and `tests/financial-reports.test.ts`
+has a dedicated case proving a reversed entry nets to zero only *after* the
+reversal date, not before.
+
+`balanceSheet` folds cumulative Income − Expenses since inception into Equity
+as "Current Earnings" (this system has no year-end closing entry that moves
+P&L into Retained Earnings), which is also a self-check: Assets = Liabilities
++ Equity is guaranteed by the posting service's own debit=credit invariant,
+and the report returns a `balances` boolean the UI surfaces as a visible
+warning if it's ever false.
+
+No claim of GST compliance is made anywhere in the UI — the GST registers
+page states explicitly that it is for return preparation only, not a filed
+return, and shows the company's GSTIN (still unset) and the HSN-verification
+caveat inline. Nothing here required a schema change or a migration: purely
+additive read paths over Phases 1-4's existing data.
+
+UI: `/accounting/reports` (hub) plus `trial-balance`, `ledger`,
+`profit-and-loss`, `balance-sheet`, `gst` — all plain server-rendered pages
+with a native GET-query-param date filter, no Server Actions or client
+JavaScript needed since nothing here writes. 11 new tests
+(`tests/financial-reports.test.ts`).
 
 ## Phase 6 — CRM integration
 
