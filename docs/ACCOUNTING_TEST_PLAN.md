@@ -7,8 +7,9 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-62 tests across four files. This is the repo's first automated test suite;
-everything outside `src/lib/accounting/` still has no coverage.
+109 tests across eight files (62 from Phase 1, 47 added in Phase 2). This is
+the repo's first automated test suite; everything outside
+`src/lib/accounting/` still has no coverage.
 
 ## The constraint that shapes everything
 
@@ -103,10 +104,36 @@ The invariants that make the ledger trustworthy:
   signature change is backwards-compatible, and the project-wide typecheck
   (which covers `voice-agent/**`) is clean.
 
-## Phase 2 additions
+## Phase 2 coverage (implemented)
 
-Invoice totals reconciling to lines plus charges plus tax; a receipt refusing
-to allocate beyond the outstanding amount; over-payment landing in advances;
-customer balance equalling the sum of their ledger; AR ageing total equalling
-the AR control-account balance; a cancelled invoice reversing rather than
-deleting; and a regression test for the `reports.ts` scope-collision bug.
+### `tests/tax.test.ts` — 13 tests
+`isInterState` case/whitespace tolerance, place-of-supply validation,
+CGST+SGST vs IGST split, cess on top of either, and `priceLine` applying
+discount before tax and refusing a non-positive quantity.
+
+### `tests/invoicing.test.ts` — 11 tests
+Balanced posting for intra- and inter-state sales, refusing an unpriced HSN or
+an unverified tax rate, refusing an order with no lines, partial invoicing
+across two calls with `quantityInvoiced` tracked correctly, refusing to
+over-invoice, a fractional-quantity round-off case (this is the test that
+caught the round-off polarity bug), and cancellation reversing the entry while
+refusing when a receipt is already allocated.
+
+### `tests/receipts.test.ts` — 10 tests
+Full and partial payment reaching PAID/PARTIALLY_PAID correctly, the
+over-allocation guard (both "more than one invoice's outstanding" and
+"allocations exceed the receipt total"), refusing cross-customer allocation,
+over-payment routing the remainder to `ADVANCE_FROM_CUSTOMER` with a balanced
+entry, a pure on-account receipt with zero allocations, and cancellation
+reversing the entry and reopening the invoice.
+
+### `tests/receivables.test.ts` — 8 tests
+`customerReceivable()` at zero/full/partial/multi-invoice/other-customer
+states; `syncCustomerOutstanding()` writing the derived figure and being
+idempotent; `reconcileOutstandingAmounts()` flagging a stale stored value
+(the exact R1 scenario) and confirming a match after sync.
+
+### `tests/permissions.test.ts` additions — 5 tests
+Regression coverage for the R2 fix: `scopedWhere()` preserves both the scope
+restriction and a colliding request filter as separate AND branches, for
+`own`, `territory`, `none` and `all` scopes.

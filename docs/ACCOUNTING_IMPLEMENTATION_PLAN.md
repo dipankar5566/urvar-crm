@@ -44,33 +44,83 @@ after, seed idempotent on re-run, ledger empty after the test suite.
   belongs with Phase 2's financial reporting, not buried in a foundation
   commit.
 
-## Phase 2 — sales invoicing and receivables · **NEXT**
+## Phase 2 — sales invoicing and receivables · **DONE (core), gated for go-live**
 
-Models: `SalesInvoice`, `SalesInvoiceItem` (snapshotting `hsnCode`, `taxRate`,
-CGST/SGST/IGST and `taxableValue` at issue time), `Receipt`,
-`ReceiptAllocation`, `CreditNote`, `OrderItem`.
+Migration `20260920045650_sales_invoicing`, strictly additive: `OrderItem`,
+`SalesInvoice`, `SalesInvoiceItem` (snapshotting `hsnCode`, `taxRatePercent`,
+CGST/SGST/IGST and `taxableValue` at issue time — fixes R6), `Receipt`,
+`ReceiptAllocation`, `CreditNote`, `CreditNoteItem` (schema only; posting not
+yet wired — see below).
 
-Work:
-- Order → Invoice with line items; partial invoicing
-- `src/lib/accounting/tax.ts` — place-of-supply resolution and the CGST/SGST vs
-  IGST split, refusing unverified `TaxRate` rows
-- Receipts with allocation; over-allocation refused; over-payment to advances
-- **Derive `Customer.outstandingAmount`** from posted AR lines and make the
-  field read-only (closes R1, and makes the AI's existing credit check honest)
-- **Fix R2** — rewrite `reports.ts` filter composition to
-  `{ AND: [scopeWhere(...), filters] }`. Prerequisite, not a follow-up.
-- Centralise the three quotation write paths (R8) and the four copies of the
-  quotation territory-scope override
-- GST tax-invoice PDF with per-line HSN and tax columns, seller GSTIN, place of
-  supply, round-off. Fixes the existing template's `colGst`/`item.unit` bug.
-- Customer ledger and AR ageing, both derived from posted lines
+**Delivered:**
+- `src/lib/accounting/tax.ts` — place-of-supply, the CGST/SGST vs IGST split,
+  and per-line pricing, refusing an unverified `TaxRate` row rather than
+  guessing (13 tests)
+- `src/lib/accounting/invoicing.ts` — `createInvoiceFromOrder()` prices every
+  line through the tax engine and posts a balanced entry in one transaction;
+  supports partial invoicing via `quantityInvoiced` tracking; `cancelInvoice()`
+  reverses rather than deletes and refuses while a receipt is allocated
+  (11 tests)
+- `src/lib/accounting/receipts.ts` — `recordReceipt()` allocates across
+  invoices with an over-allocation guard, routes any unallocated remainder to
+  `ADVANCE_FROM_CUSTOMER`, and keeps each invoice's DRAFT/POSTED/
+  PARTIALLY_PAID/PAID status in step; `cancelReceipt()` reverses and reopens
+  the invoice (10 tests)
+- `src/lib/accounting/receivables.ts` — **closes R1.** `customerReceivable()`
+  derives the true balance from posted AR lines; `syncCustomerOutstanding()`
+  writes it back and is called automatically after every invoice/receipt
+  post or cancel; `reconcileOutstandingAmounts()` is the audit report
+  (8 tests). The customer edit form now renders `outstandingAmount` read-only
+  once a customer has ledger history — it is set once as an opening balance on
+  create, then ledger-derived from there.
+- **Fixed R2** — `reports.ts`'s three scope-collision sites (leads, orders, rep
+  leaderboard) rewritten through a new `scopedWhere()` primitive in
+  `permissions.ts`, with 5 regression tests locking the composition in place
+  so the bug class can't reappear silently.
+- `/invoices`, `/invoices/[invoiceId]`, `/invoices/new` (from an order's
+  "Raise Invoice" button on the quotation detail page); `/receipts`,
+  `/receipts/[receiptId]`, `/receipts/new` with live outstanding-invoice
+  lookup via `/api/customers/[customerId]/open-invoices`.
+- `scripts/backfill-order-items.ts` — one-off, idempotent, applied: both real
+  pre-Phase-2 orders (ORD-2026-0001, ORD-2026-0002) had zero `OrderItem` rows
+  and are now backfilled from their linked `QuotationItem`s and invoiceable.
 
-**Blockers before go-live, not before build:**
-- `Company.gstin`, address and bank details are null and nothing will invent
-  them
+**109 tests total, up from 62.** Every one of the following was a real bug the
+tests caught before it reached anything real:
+- The same transaction-detection defect as Phase 1's posting service existed
+  in `createInvoiceFromOrder`/`recordReceipt`/`cancelInvoice`/`cancelReceipt` —
+  fixed the same way, by accepting an explicit `Prisma.TransactionClient`
+  rather than sniffing for one.
+- **Round-off polarity was backwards.** When rounding a total up increased it,
+  the code debited `ROUND_OFF` instead of crediting it, producing an
+  unbalanced entry on any invoice needing a round-off — caught by the first
+  fractional-quantity test, not by inspection.
+
+**Explicitly not done, and why:**
+- `CreditNote` posting logic (the schema exists; nothing writes to it yet) —
+  no live requirement to build against, since Urvar has no invoices to credit
+  against yet.
+- The GST tax-invoice PDF template — the detail page renders everything the
+  PDF would need, but the PDF itself needs `@react-pdf/renderer` work that is
+  cosmetic, not load-bearing, and was deprioritised behind the posting
+  correctness above.
+- Centralising the three quotation write paths (R8) — untouched; still three
+  places create an Order, none of which yet call `createInvoiceFromOrder`.
+- AR ageing report — `customerReceivable()` gives the number; a dated buckets
+  view is straightforward but not yet built.
+
+**Go-live gate, unchanged and still blocking:**
+- `Company.gstin`, address and bank details are still null — they print on a
+  tax invoice and nothing here will invent them.
 - HSN classification for all four products needs accountant sign-off,
-  especially Liquid Humic Acid at `3101`
-- The 25 kg vs 5 kg pack-size disagreement must be resolved
+  especially Liquid Humic Acid at `3101` (the one seeded `TaxRate` row is
+  `isVerified: false`, and `resolveTaxRate()` refuses to price from it until
+  that changes).
+- The 25 kg vs 5 kg pack-size disagreement must be resolved.
+
+The code is real and tested against synthetic fixtures and now against the
+two real orders in production; **switching it on for a customer-facing
+invoice is still Urvar's data task, not an engineering one.**
 
 ## Phase 3 — purchases and expenses
 

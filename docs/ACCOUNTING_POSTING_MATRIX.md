@@ -32,7 +32,7 @@ Whatever the user enters, subject to the rules above. `sourceType: MANUAL`,
 original with `debit` and `credit` swapped; party attribution preserved. The
 original is marked `REVERSED` and linked via `reversesEntryId`.
 
-## Phase 2 — sales side (designed, not yet built)
+## Phase 2 — sales side · implemented (`src/lib/accounting/invoicing.ts`, `receipts.ts`)
 
 ### Sales invoice, intra-state (place of supply = seller's state)
 
@@ -68,7 +68,7 @@ it silently decides CGST+SGST vs IGST on every invoice.
 The split is what makes over-payment safe: anything not allocated to a
 specific invoice lands in advances rather than driving a receivable negative.
 
-### Credit note (sales return or correction)
+### Credit note (sales return or correction) — schema exists, posting not yet wired
 
 | Account | Dr | Cr |
 |---|---|---|

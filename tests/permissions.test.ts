@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  PERMISSIONS, can, assertCan, assertCanApprove, canSelfApprove, scopeWhere,
+  PERMISSIONS, can, assertCan, assertCanApprove, canSelfApprove, scopeWhere, scopedWhere,
 } from "@/lib/permissions";
 import type { Module, Action } from "@/lib/permissions";
 import type { Role } from "@/generated/prisma/enums";
@@ -118,5 +118,45 @@ describe("scopeWhere() still behaves after the matrix change", () => {
       state: { in: ["West Bengal", "Odisha"] },
     });
     expect(scopeWhere("all", user, "createdById")).toEqual({});
+  });
+});
+
+describe("scopedWhere(): the R2 regression", () => {
+  const exec = { id: "rep-1", territoryStates: [] as string[] };
+  const dm = { id: "dm-1", territoryStates: ["West Bengal"] };
+
+  it("keeps the owner restriction when a request supplies the same key", () => {
+    // The old code spread scopeWhere and then assigned where.assignedToId,
+    // so ?repId=<someone else> replaced the restriction outright.
+    const where = scopedWhere("own", exec, "assignedToId", { assignedToId: "rep-2" });
+    expect(where.AND[0]).toEqual({ assignedToId: "rep-1" });
+    expect(where.AND[1]).toEqual({ assignedToId: "rep-2" });
+    // Both survive. Prisma ANDs them, so the result is zero rows — not rep-2's.
+    expect(where.AND).toHaveLength(2);
+  });
+
+  it("keeps the territory restriction when a request supplies a state", () => {
+    const where = scopedWhere("territory", dm, "createdById", { state: "Karnataka" });
+    expect(where.AND[0]).toEqual({ state: { in: ["West Bengal"] } });
+    expect(where.AND[1]).toEqual({ state: "Karnataka" });
+  });
+
+  it("never lets a filter key reach the same object as the scope key", () => {
+    const where = scopedWhere("own", exec, "assignedToId", { assignedToId: "rep-2" });
+    for (const fragment of where.AND) {
+      const keys = Object.keys(fragment);
+      expect(keys.length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("preserves the impossible-match fragment for a none scope", () => {
+    const where = scopedWhere("none", exec, "assignedToId", { assignedToId: "rep-2" });
+    expect(where.AND[0]).toEqual({ id: "__no_access__" });
+  });
+
+  it("passes filters through untouched for an all scope", () => {
+    const where = scopedWhere("all", exec, "assignedToId", { state: "Odisha" });
+    expect(where.AND[0]).toEqual({});
+    expect(where.AND[1]).toEqual({ state: "Odisha" });
   });
 });

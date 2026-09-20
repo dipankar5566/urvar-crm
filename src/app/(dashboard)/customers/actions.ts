@@ -159,7 +159,11 @@ export async function updateCustomer(
       gstNumber: data.gstNumber,
       panNumber: data.panNumber,
       creditLimit: data.creditLimit,
-      outstandingAmount: data.outstandingAmount ?? existing.outstandingAmount,
+      // outstandingAmount is deliberately NOT written here. Once posted
+      // invoices/receipts exist it is ledger-derived (see
+      // src/lib/accounting/receivables.ts's syncCustomerOutstanding) and the
+      // edit form no longer offers it as an input; trusting a client-supplied
+      // value on update would let it drift from the ledger silently.
       dealerTier: data.dealerTier as never,
       territoryAssigned: data.territoryAssigned,
       annualTargetValue: data.annualTargetValue,

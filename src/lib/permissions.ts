@@ -200,6 +200,29 @@ export function assertCan(role: Role, module: Module, action: Action): Scope {
 }
 
 /**
+ * Compose a scope restriction with request-controlled filters, safely.
+ *
+ * The hazard this exists to remove: spreading `scopeWhere(...)` into an object
+ * and then setting a sibling key is a plain JS key collision that *replaces*
+ * the scope restriction instead of narrowing it. It does not error, it does
+ * not warn, and it silently widens access — a rep passing ?repId= reads
+ * another rep's data.
+ *
+ * Prisma ANDs duplicate keys across array elements rather than letting one win,
+ * so a conflicting filter returns zero rows instead of someone else's. Use this
+ * for every query that combines a scope with anything the request controls.
+ */
+export function scopedWhere(
+  scope: Scope,
+  user: ScopeUser,
+  ownerField: string,
+  filters: Record<string, unknown> = {},
+  stateField = "state",
+): { AND: Record<string, unknown>[] } {
+  return { AND: [scopeWhere(scope, user, ownerField, stateField), filters] };
+}
+
+/**
  * Separation of duties: may `approverId` approve a document created by
  * `createdById`?
  *

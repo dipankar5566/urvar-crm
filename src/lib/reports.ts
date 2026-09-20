@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { can, scopeWhere, type Scope } from "@/lib/permissions";
+import { can, scopedWhere, type Scope } from "@/lib/permissions";
 import type { requireUser } from "@/lib/session";
 import { classifyQuotationSafeZone } from "@/lib/safe-zone";
 
@@ -45,13 +45,21 @@ function quotationScopeWhere(scope: Scope, user: ReportUser) {
 
 export async function getLeadsReport(user: ReportUser, filters: ReportFilters) {
   const scope = can(user.role, "reports", "read");
-  const where: Record<string, unknown> = {
-    ...scopeWhere(scope, user, "assignedToId"),
+  // AND, never a spread. `scopeWhere` for an "own" scope returns
+  // { assignedToId: user.id }, and assigning where.assignedToId beside it is a
+  // plain object-key collision that replaces the restriction instead of
+  // narrowing it — a sales executive could read another rep's report with
+  // ?repId=. Prisma ANDs duplicate keys across array elements, so a
+  // conflicting filter now returns zero rows rather than someone else's.
+  const requestFilters: Record<string, unknown> = {
     createdAt: { gte: filters.from, lte: filters.to },
     deletedAt: null,
   };
-  if (filters.state) where.state = filters.state;
-  if (filters.repId) where.assignedToId = filters.repId === "UNASSIGNED" ? null : filters.repId;
+  if (filters.state) requestFilters.state = filters.state;
+  if (filters.repId) {
+    requestFilters.assignedToId = filters.repId === "UNASSIGNED" ? null : filters.repId;
+  }
+  const where = scopedWhere(scope, user, "assignedToId", requestFilters);
 
   const [byStatus, bySource, byState, leads] = await Promise.all([
     prisma.lead.groupBy({ by: ["status"], where, _count: { _all: true } }),
@@ -82,11 +90,14 @@ export async function getLeadsReport(user: ReportUser, filters: ReportFilters) {
 
 export async function getOrdersReport(user: ReportUser, filters: ReportFilters) {
   const scope = can(user.role, "reports", "read");
-  const where: Record<string, unknown> = {
-    ...scopeWhere(scope, user, "createdById"),
+  // Same collision as getLeadsReport: a territory scope resolves to
+  // { state: { in: territoryStates } }, which a request-supplied ?state=
+  // would otherwise overwrite outright.
+  const requestFilters: Record<string, unknown> = {
     orderedAt: { gte: filters.from, lte: filters.to },
   };
-  if (filters.state) where.state = filters.state;
+  if (filters.state) requestFilters.state = filters.state;
+  const where = scopedWhere(scope, user, "createdById", requestFilters);
 
   const [byState, byStatus, totals, orders] = await Promise.all([
     prisma.order.groupBy({ by: ["state"], where, _sum: { totalAmount: true }, _count: { _all: true } }),
@@ -238,12 +249,14 @@ export async function getRepLeaderboard(user: ReportUser, filters: ReportFilters
   const scope = can(user.role, "reports", "read");
   if (scope !== "all" && scope !== "territory") return [];
 
-  const where: Record<string, unknown> = {
+  const requestFilters: Record<string, unknown> = {
     createdAt: { gte: filters.from, lte: filters.to },
     deletedAt: null,
   };
-  if (scope === "territory") where.state = { in: user.territoryStates };
-  if (filters.state) where.state = filters.state;
+  if (filters.state) requestFilters.state = filters.state;
+  const scopeFilter =
+    scope === "territory" ? { state: { in: user.territoryStates } } : {};
+  const where = { AND: [scopeFilter, requestFilters] };
 
   const grouped = await prisma.lead.groupBy({
     by: ["assignedToId"],
@@ -252,7 +265,7 @@ export async function getRepLeaderboard(user: ReportUser, filters: ReportFilters
   });
   const won = await prisma.lead.groupBy({
     by: ["assignedToId"],
-    where: { ...where, status: "WON" },
+    where: { AND: [...where.AND, { status: "WON" }] },
     _count: { _all: true },
   });
   const wonMap = new Map(won.map((w) => [w.assignedToId, w._count._all]));

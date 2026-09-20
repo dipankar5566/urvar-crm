@@ -44,6 +44,8 @@ export const NAV_ITEMS: NavItem[] = [
   // Accounts. Gated by the `accounting` module, which is NONE for all three
   // sales roles — so this whole section is invisible to them, the same way
   // Purchases already is.
+  { label: "Invoices", href: "/invoices", icon: "FileSpreadsheet", module: "invoices", section: "accounts" },
+  { label: "Receipts", href: "/receipts", icon: "Wallet", module: "payments", section: "accounts" },
   { label: "Chart of Accounts", href: "/accounting", icon: "BookOpen", module: "accounting", section: "accounts" },
   { label: "Journal", href: "/accounting/journal", icon: "BookText", module: "accounting", section: "accounts" },
   { label: "Periods", href: "/accounting/periods", icon: "CalendarRange", module: "accounting", section: "accounts" },

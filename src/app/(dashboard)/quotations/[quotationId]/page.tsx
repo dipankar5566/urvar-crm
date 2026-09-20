@@ -60,6 +60,7 @@ export default async function QuotationDetailPage({
   if (!quotation) notFound();
 
   const canWrite = can(user.role, "quotations", "write") !== "none";
+  const canInvoice = can(user.role, "accounting", "write") !== "none";
 
   return (
     <div className="space-y-6">
@@ -117,9 +118,16 @@ export default async function QuotationDetailPage({
 
       {quotation.order && (
         <Card>
-          <CardContent className="py-3 text-sm">
-            Order created:{" "}
-            <span className="font-medium">{quotation.order.orderNumber}</span>
+          <CardContent className="flex items-center justify-between py-3 text-sm">
+            <span>
+              Order created:{" "}
+              <span className="font-medium">{quotation.order.orderNumber}</span>
+            </span>
+            {canInvoice && (
+              <Button size="sm" variant="outline" render={<Link href={`/invoices/new?orderId=${quotation.order.id}`} />}>
+                Raise Invoice
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}

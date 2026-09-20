@@ -275,6 +275,9 @@ model User {
   auditLogs               AuditLog[]
   postedEntries           JournalEntry[]         @relation("JournalPoster")
   closedPeriods           FinancialPeriod[]      @relation("PeriodCloser")
+  salesInvoicesCreated    SalesInvoice[]         @relation("SalesInvoiceCreator")
+  receiptsCreated         Receipt[]              @relation("ReceiptCreator")
+  creditNotesCreated      CreditNote[]           @relation("CreditNoteCreator")
 
   @@index([role])
 }
@@ -605,6 +608,9 @@ model Customer {
   messageLogs   MessageLog[]
   fieldVisits   FieldVisit[]
   files         File[]
+  salesInvoices SalesInvoice[]
+  receipts      Receipt[]
+  creditNotes   CreditNote[]
 
   @@index([customerType])
   @@index([state])
@@ -648,8 +654,11 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  quotationItems QuotationItem[]
-  purchaseItems  PurchaseInvoiceItem[]
+  quotationItems    QuotationItem[]
+  purchaseItems     PurchaseInvoiceItem[]
+  orderItems        OrderItem[]
+  salesInvoiceItems SalesInvoiceItem[]
+  creditNoteItems   CreditNoteItem[]
 
   @@index([category])
 }
@@ -684,10 +693,11 @@ model Quotation {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
-  items       QuotationItem[]
-  order       Order?
-  files       File[]
-  messageLogs MessageLog[]
+  items         QuotationItem[]
+  order         Order?
+  files         File[]
+  messageLogs   MessageLog[]
+  salesInvoices SalesInvoice[]
 
   @@index([status])
   @@index([customerId])
@@ -730,6 +740,9 @@ model Order {
   createdBy     User          @relation("OrderCreator", fields: [createdById], references: [id])
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
+
+  items         OrderItem[]
+  salesInvoices SalesInvoice[]
 
   @@index([customerId])
   @@index([state])
@@ -1068,6 +1081,9 @@ model Company {
 
   financialPeriods FinancialPeriod[]
   documentSeries   DocumentSeries[]
+  salesInvoices    SalesInvoice[]
+  receipts         Receipt[]
+  creditNotes      CreditNote[]
 }
 
 /// A node in the chart of accounts.
@@ -1102,8 +1118,9 @@ model LedgerAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines    JournalLine[]
-  mappings AccountMapping[]
+  lines           JournalLine[]
+  mappings        AccountMapping[]
+  receiptDeposits Receipt[]        @relation("ReceiptDeposit")
 
   @@index([type])
   @@index([parentId])
@@ -1297,4 +1314,339 @@ model TaxRate {
 
   @@index([hsnCode, effectiveFrom])
   @@index([isVerified])
+}
+
+// ============================================================
+// ACCOUNTING — sales invoicing and receivables (Phase 2)
+//
+// The outbound chain used to stop at Order, which is a header carrying one
+// totalAmount and no lines. These models complete it:
+//   Quotation -> Order (+ items) -> SalesInvoice (+ items) -> Receipt
+// with CreditNote for returns and corrections.
+//
+// Everything money-bearing is snapshotted at issue time. A product's name,
+// HSN code or GST rate may change next quarter; a tax invoice issued today
+// must stay exactly re-derivable, which the existing QuotationItem cannot do
+// because it reads gstPercent live off Product.
+// ============================================================
+
+enum SalesInvoiceStatus {
+  /// Editable, no ledger impact.
+  DRAFT
+  /// Posted to the ledger and immutable. Nothing paid yet.
+  POSTED
+  PARTIALLY_PAID
+  PAID
+  /// Reversed in the ledger. The row stays, the money is undone.
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  CARD
+  OTHER
+}
+
+enum ReceiptStatus {
+  POSTED
+  CANCELLED
+}
+
+enum CreditNoteReason {
+  SALES_RETURN
+  RATE_DIFFERENCE
+  SHORTAGE
+  POST_SALE_DISCOUNT
+  CANCELLATION
+  OTHER
+}
+
+/// Line items for an Order.
+///
+/// The Order model shipped without any, so an accepted quotation produced a
+/// header with a single totalAmount and nothing to invoice line-by-line from,
+/// no per-product margin and no partial fulfilment. Nullable productId
+/// mirrors PurchaseInvoiceItem: a historical order may reference a product
+/// that has since been removed from the catalogue.
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
+  /// Snapshot, so the line still reads correctly if the product is renamed.
+  description String
+  quantity    Decimal @db.Decimal(12, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  lineTotal   Decimal @db.Decimal(14, 2)
+
+  /// How much of this line has been invoiced, for partial invoicing.
+  quantityInvoiced Decimal @default(0) @db.Decimal(12, 2)
+
+  lineNumber Int
+
+  @@index([orderId])
+}
+
+/// A GST tax invoice.
+model SalesInvoice {
+  id            String  @id @default(cuid())
+  invoiceNumber String  @unique
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  /// Provenance. Both optional: an invoice may be raised directly.
+  orderId     String?
+  order       Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  quotationId String?
+  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+
+  invoiceDate DateTime
+  dueDate     DateTime?
+
+  /// Place of supply, captured at issue time rather than read from the
+  /// customer later — a customer may move state, and that must not
+  /// retrospectively change whether an old invoice was CGST+SGST or IGST.
+  placeOfSupply String
+  isInterState  Boolean
+  customerGstin String?
+
+  /// Seller identity as printed. Snapshotted for the same reason.
+  sellerGstin String?
+  sellerState String
+
+  reverseCharge Boolean @default(false)
+
+  subtotal       Decimal @default(0) @db.Decimal(14, 2)
+  discountAmount Decimal @default(0) @db.Decimal(14, 2)
+  freightAmount  Decimal @default(0) @db.Decimal(12, 2)
+  cgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  cessAmount     Decimal @default(0) @db.Decimal(14, 2)
+  /// Sub-rupee adjustment shown as its own line on the invoice.
+  roundOff       Decimal @default(0) @db.Decimal(6, 2)
+  totalAmount    Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Workflow state. The authoritative paid amount is always the sum of
+  /// ReceiptAllocation rows; this is kept in step inside the same transaction
+  /// as an allocation, and a test asserts the two never disagree.
+  status SalesInvoiceStatus @default(DRAFT)
+
+  /// Migrated from Vyapar as an opening balance. Such an invoice posts to
+  /// AR and Opening Balance Equity, never to revenue, and is excluded from
+  /// the GST output registers — that revenue was recognised in Vyapar and is
+  /// already in a filed return.
+  isOpeningItem Boolean @default(false)
+
+  notes              String?
+  termsAndConditions String?
+
+  /// The journal entry this invoice posted, once posted.
+  postedEntryId String?   @unique
+  postedAt      DateTime?
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("SalesInvoiceCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items       SalesInvoiceItem[]
+  allocations ReceiptAllocation[]
+  creditNotes CreditNote[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([invoiceDate])
+  @@index([orderId])
+}
+
+/// One line of a tax invoice, with tax resolved and frozen per line.
+model SalesInvoiceItem {
+  id        String       @id @default(cuid())
+  invoiceId String
+  invoice   SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
+  /// All snapshots. QuotationItem stores none of these and reads gstPercent
+  /// live off Product, which is why a historical quotation's tax cannot be
+  /// reconstructed once a rate changes.
+  description String
+  hsnCode     String?
+  unit        String
+
+  quantity        Decimal @db.Decimal(12, 2)
+  unitPrice       Decimal @db.Decimal(12, 2)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  taxableValue    Decimal @db.Decimal(14, 2)
+
+  taxRatePercent Decimal @db.Decimal(5, 2)
+  cgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  cessAmount     Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal      Decimal @db.Decimal(14, 2)
+
+  lineNumber Int
+
+  @@index([invoiceId])
+  @@index([productId])
+}
+
+/// Money received from a customer.
+///
+/// A receipt is not tied to one invoice: a customer pays an amount, and that
+/// amount is then allocated across invoices. Modelling it the other way round
+/// makes part-payments and on-account payments impossible to represent.
+model Receipt {
+  id            String  @id @default(cuid())
+  receiptNumber String  @unique
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  receiptDate DateTime
+  amount      Decimal  @db.Decimal(14, 2)
+
+  method    PaymentMethod
+  /// UTR, cheque number, UPI reference. Free text by necessity.
+  reference String?
+
+  /// Which cash or bank account the money landed in. A real account id rather
+  /// than a mapping key, because a business may hold several bank accounts and
+  /// the mapping only names the default.
+  depositAccountId String
+  depositAccount   LedgerAccount @relation("ReceiptDeposit", fields: [depositAccountId], references: [id])
+
+  status ReceiptStatus @default(POSTED)
+  notes  String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("ReceiptCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations ReceiptAllocation[]
+
+  @@index([customerId])
+  @@index([receiptDate])
+  @@index([status])
+}
+
+/// How much of one receipt was applied to one invoice.
+///
+/// The sum of these per invoice is the authoritative paid amount; the sum per
+/// receipt may be less than the receipt, and the remainder sits as an advance.
+model ReceiptAllocation {
+  id        String       @id @default(cuid())
+  receiptId String
+  receipt   Receipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  invoiceId String
+  invoice   SalesInvoice @relation(fields: [invoiceId], references: [id])
+
+  amount Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  /// One allocation row per (receipt, invoice) pair — a second application of
+  /// the same receipt to the same invoice is an edit, not a new row.
+  @@unique([receiptId, invoiceId])
+  @@index([invoiceId])
+}
+
+/// A credit note against an issued invoice — sales return, rate difference,
+/// shortage, or a post-sale discount.
+///
+/// Never a deletion or an edit of the original invoice: under GST the original
+/// document stands and is adjusted by a separate credit note carrying its own
+/// number and its own reversal of output tax.
+model CreditNote {
+  id               String  @id @default(cuid())
+  creditNoteNumber String  @unique
+  companyId        String
+  company          Company @relation(fields: [companyId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  /// The invoice being adjusted. Optional only for an unlinked adjustment,
+  /// which should be rare and is worth being able to spot.
+  invoiceId String?
+  invoice   SalesInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  noteDate  DateTime
+  reason    CreditNoteReason
+  narration String?
+
+  placeOfSupply String
+  isInterState  Boolean
+
+  subtotal    Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount  Decimal @default(0) @db.Decimal(14, 2)
+  cessAmount  Decimal @default(0) @db.Decimal(14, 2)
+  roundOff    Decimal @default(0) @db.Decimal(6, 2)
+  totalAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  postedEntryId String?   @unique
+  postedAt      DateTime?
+
+  createdById String
+  createdBy   User   @relation("CreditNoteCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items CreditNoteItem[]
+
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([noteDate])
+}
+
+model CreditNoteItem {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
+  description String
+  hsnCode     String?
+  unit        String
+
+  quantity     Decimal @db.Decimal(12, 2)
+  unitPrice    Decimal @db.Decimal(12, 2)
+  taxableValue Decimal @db.Decimal(14, 2)
+
+  taxRatePercent Decimal @db.Decimal(5, 2)
+  cgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount     Decimal @default(0) @db.Decimal(14, 2)
+  cessAmount     Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal      Decimal @db.Decimal(14, 2)
+
+  lineNumber Int
+
+  @@index([creditNoteId])
 }

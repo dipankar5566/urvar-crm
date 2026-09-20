@@ -72,3 +72,102 @@ export async function openPeriodDate(tx: Prisma.TransactionClient): Promise<Date
   d.setHours(12, 0, 0, 0); // clear of any boundary/timezone edge
   return d;
 }
+
+/** A verified TaxRate row so priceLine/resolveTaxRate has something to find. */
+export async function ensureVerifiedTaxRate(
+  tx: Prisma.TransactionClient,
+  hsnCode: string,
+  ratePercent: string | number = 5,
+): Promise<void> {
+  const existing = await tx.taxRate.findFirst({ where: { hsnCode, isVerified: true } });
+  if (existing) return;
+  await tx.taxRate.create({
+    data: {
+      hsnCode,
+      ratePercent: String(ratePercent),
+      treatment: "TAXABLE",
+      effectiveFrom: new Date(2000, 0, 1),
+      isVerified: true,
+      verifiedNote: "Test fixture.",
+    },
+  });
+}
+
+let seq = 0;
+/** A throwaway product with a real HSN, for invoicing tests. */
+export async function testProduct(
+  tx: Prisma.TransactionClient,
+  overrides: { hsnCode?: string; unit?: string; mrp?: string | number } = {},
+) {
+  const n = ++seq;
+  return tx.product.create({
+    data: {
+      sku: `TEST-SKU-${Date.now()}-${n}`,
+      name: `Test Product ${n}`,
+      category: "VERMICOMPOST",
+      unit: overrides.unit ?? "kg",
+      hsnCode: overrides.hsnCode ?? "3101",
+      mrp: String(overrides.mrp ?? 100),
+      gstPercent: "5",
+    },
+  });
+}
+
+/** A throwaway customer in a given state, for tax-split tests. */
+export async function testCustomer(
+  tx: Prisma.TransactionClient,
+  overrides: { state?: string; gstNumber?: string | null } = {},
+) {
+  const n = ++seq;
+  return tx.customer.create({
+    data: {
+      customerNumber: `TEST-CUST-${Date.now()}-${n}`,
+      name: `Test Customer ${n}`,
+      phone: "9800000000",
+      state: overrides.state ?? "West Bengal",
+      district: "Kolkata",
+      gstNumber: overrides.gstNumber ?? null,
+    },
+  });
+}
+
+/** An Order with one line, ready to invoice. */
+export async function testOrderWithLine(
+  tx: Prisma.TransactionClient,
+  opts: {
+    userId: string;
+    customerId: string;
+    productId: string;
+    quantity?: string | number;
+    unitPrice?: string | number;
+  },
+) {
+  const n = ++seq;
+  const customer = await tx.customer.findUniqueOrThrow({ where: { id: opts.customerId } });
+  const quantity = String(opts.quantity ?? 10);
+  const unitPrice = String(opts.unitPrice ?? 100);
+  const lineTotal = (Number(quantity) * Number(unitPrice)).toFixed(2);
+  return tx.order.create({
+    data: {
+      orderNumber: `TEST-ORD-${Date.now()}-${n}`,
+      customerId: opts.customerId,
+      totalAmount: lineTotal,
+      state: customer.state,
+      district: customer.district,
+      createdById: opts.userId,
+      items: {
+        create: [
+          {
+            productId: opts.productId,
+            description: "Test line",
+            quantity,
+            unitPrice,
+            lineTotal,
+            lineNumber: 1,
+          },
+        ],
+      },
+    },
+    include: { items: true },
+  });
+}

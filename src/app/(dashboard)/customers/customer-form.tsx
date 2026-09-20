@@ -328,13 +328,30 @@ export function CustomerForm({
           </div>
           <div className="space-y-2">
             <Label htmlFor="outstandingAmount">Outstanding Amount (₹)</Label>
-            <Input
-              id="outstandingAmount"
-              type="number"
-              min="0"
-              value={values.outstandingAmount}
-              onChange={(e) => set("outstandingAmount", e.target.value)}
-            />
+            {customerId ? (
+              <>
+                <Input id="outstandingAmount" type="text" value={values.outstandingAmount} disabled />
+                <p className="text-xs text-muted-foreground">
+                  Derived from posted invoices and receipts — no longer hand-edited here.
+                  See the customer&apos;s ledger for detail.
+                </p>
+              </>
+            ) : (
+              <>
+                <Input
+                  id="outstandingAmount"
+                  type="number"
+                  min="0"
+                  value={values.outstandingAmount}
+                  onChange={(e) => set("outstandingAmount", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Opening balance only, for a customer with dues from before this system.
+                  Once an invoice or receipt posts against them, this becomes ledger-derived
+                  and can no longer be edited directly.
+                </p>
+              </>
+            )}
           </div>
           {isDealerType && (
             <>
