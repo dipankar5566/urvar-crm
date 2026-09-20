@@ -353,6 +353,10 @@ export async function gstOutwardSupplyRegister(
     where: {
       invoice: {
         status: { not: "CANCELLED" },
+        // Opening balances migrated from a prior system were never a taxable
+        // event under this company's own GST registration — that supply (if
+        // any) was already reported under the old system's GSTR filing.
+        isOpeningItem: false,
         invoiceDate: { gte: fromDate, lte: toDate },
       },
     },

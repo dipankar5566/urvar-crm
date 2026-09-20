@@ -58,3 +58,8 @@ next-env.d.ts
 # prospect data — named businesses, phone numbers, addresses, GPS, sales
 # tiers and estimated tonnage — so it stays on disk, out of git history.
 /kml
+
+# Vyapar export files and the opening-balance migration script (real
+# customer/supplier names, phone numbers, balances, loan amounts) — stays on
+# disk, out of git history, same reasoning as /kml above.
+/vyapar

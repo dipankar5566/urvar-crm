@@ -44,6 +44,16 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "1110", name: "Cash on Hand", type: "ASSET", parent: "1100" },
   { code: "1120", name: "Bank Accounts", type: "ASSET", parent: "1100", ...GROUP },
   { code: "1121", name: "Bank - Current Account", type: "ASSET", parent: "1120" },
+  {
+    code: "1122",
+    name: "Bank - Flipkart Settlement",
+    type: "ASSET",
+    parent: "1120",
+    description:
+      "Marketplace settlement balance, kept separate from the real bank account " +
+      "for reconciliation against Flipkart's own statements. Added during the " +
+      "Vyapar opening-balance migration, 2026-09-20.",
+  },
 
   {
     code: "1130",

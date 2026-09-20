@@ -974,6 +974,13 @@ model PurchaseInvoice {
 
   status PurchaseInvoiceStatus @default(DRAFT)
 
+  /// Mirrors SalesInvoice.isOpeningItem — a balance migrated from Vyapar as
+  /// of the cut-over date, not a fresh purchase. Posts to AP and Opening
+  /// Balance Equity, never to Purchases, and is excluded from GST input
+  /// registers the same way an opening sales invoice is excluded from output
+  /// registers: that ITC was already claimed under the old system.
+  isOpeningItem Boolean @default(false)
+
   postedEntryId String?   @unique
   postedAt      DateTime?
   cancelledAt   DateTime?
