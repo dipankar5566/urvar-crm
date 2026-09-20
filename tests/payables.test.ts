@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { postPurchaseInvoice } from "@/lib/accounting/purchase-posting";
+import { postPurchaseInvoice, cancelPurchaseInvoice } from "@/lib/accounting/purchase-posting";
 import { recordSupplierPayment } from "@/lib/accounting/supplier-payments";
 import { supplierPayable, allSupplierPayables } from "@/lib/accounting/payables";
 import { toAmountString } from "@/lib/accounting/money";
@@ -87,6 +87,29 @@ describe("allSupplierPayables()", () => {
 
       const row = rows.find((r) => r.supplierId === supplierWithBalance.id);
       expect(row!.ledgerPayable).toBe("777.00");
+    });
+  });
+});
+
+describe("supplierPayable(): cancellation regression", () => {
+  it("nets to zero after the only invoice is cancelled, not a phantom negative balance", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const supplier = await testSupplier(tx, { userId });
+      const invoice = await testPurchaseInvoice(tx, {
+        userId, supplierId: supplier.id, invoiceDate: date,
+        subtotal: "500.00", taxAmount: "0", totalAmount: "500.00",
+      });
+      await postPurchaseInvoice({ invoiceId: invoice.id, postedById: userId }, tx);
+      expect(toAmountString(await supplierPayable(supplier.id, tx))).toBe("500.00");
+
+      await cancelPurchaseInvoice({ invoiceId: invoice.id, reason: "Test cancellation", cancelledById: userId }, tx);
+
+      // Before the fix, filtering to entry status "POSTED" excluded the
+      // original (now REVERSED) credit while still counting the reversal's
+      // debit, leaving this at -500.00 instead of 0.00.
+      expect(toAmountString(await supplierPayable(supplier.id, tx))).toBe("0.00");
     });
   });
 });

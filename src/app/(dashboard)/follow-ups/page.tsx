@@ -62,6 +62,11 @@ export default async function FollowUpsPage({
       where,
       include: {
         lead: { select: { id: true, name: true, leadNumber: true } },
+        // Was missing until Phase 6: FollowUp.customerId has been a real
+        // field since this model existed, but the list only ever included
+        // `lead` — a customer-linked follow-up silently rendered as "—"
+        // instead of erroring, so the gap went unnoticed.
+        customer: { select: { id: true, name: true, outstandingAmount: true } },
         assignedTo: { select: { name: true } },
       },
       orderBy: { dueAt: "asc" },
@@ -105,7 +110,7 @@ export default async function FollowUpsPage({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Lead</TableHead>
+              <TableHead>Lead / Customer</TableHead>
               <TableHead>Due At</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Status</TableHead>
@@ -131,6 +136,17 @@ export default async function FollowUpsPage({
                       <Link href={`/leads/${f.lead.id}`} className="hover:underline">
                         {f.lead.name}
                       </Link>
+                    ) : f.customer ? (
+                      <div>
+                        <Link href={`/customers/${f.customer.id}`} className="hover:underline">
+                          {f.customer.name}
+                        </Link>
+                        {Number(f.customer.outstandingAmount) > 0 && (
+                          <div className="text-xs text-destructive">
+                            ₹{Number(f.customer.outstandingAmount).toLocaleString("en-IN")} outstanding
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}

@@ -172,6 +172,15 @@ const PORT = Number(process.env.VOICE_AGENT_PORT ?? 3010);
 type CallSession = {
   mode: "AI_ASSISTED" | "AI_AUTONOMOUS";
   leadId: string | null;
+  /**
+   * Set only when this Lead has actually converted to a Customer
+   * (`Customer.sourceLeadId`), resolved once here rather than trusted from
+   * anything the caller says. `get_account_status` (Phase 6) refuses to
+   * disclose any figure while this is null — a Lead who hasn't converted has
+   * no account to report on, and this is never guessed from a name or phone
+   * number match, only this one authoritative relation.
+   */
+  customerId: string | null;
   // Fetched alongside the Call row in handlePlivoStream so the greeting's
   // critical path doesn't need a second query, and so the TTS voice
   // language can be picked from the lead's state before the socket opens.
@@ -321,6 +330,7 @@ type LeadRow = {
   expectedQuantity: string | null;
   cropInterest: string | null;
   remarks: string | null;
+  convertedCustomer: { id: string } | null;
 };
 
 function createSession(
@@ -338,6 +348,7 @@ function createSession(
   return {
     mode,
     leadId,
+    customerId: lead?.convertedCustomer?.id ?? null,
     leadName: lead?.name ?? null,
     leadState: lead?.state ?? null,
     leadBrief: {
@@ -963,6 +974,7 @@ async function handlePlivoStream(ws: WebSocket, url: URL) {
             expectedQuantity: true,
             cropInterest: true,
             remarks: true,
+            convertedCustomer: { select: { id: true } },
           },
         },
       },
@@ -1524,6 +1536,7 @@ async function runNextAgentTurn(
     const toolCtx = {
       prisma,
       leadId: session.leadId,
+      customerId: session.customerId,
       callId,
       providerCallSid: session.providerCallSid,
       originUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",

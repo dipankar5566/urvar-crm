@@ -4,6 +4,8 @@ import { Pencil, Phone, Mail, MapPin, FileText, ShoppingCart } from "lucide-reac
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { can, scopeWhere } from "@/lib/permissions";
+import { customerAccountStatus } from "@/lib/accounting/receivables";
+import { formatInr } from "@/lib/accounting/money";
 import {
   Card,
   CardContent,
@@ -89,6 +91,12 @@ export default async function CustomerDetailPage({
   const canViewCalls = callScope !== "none";
   const showCallRep = callScope === "all";
   const isDealerType = customer.dealerTier !== null || customer.territoryAssigned !== null;
+
+  // Phase 6: overdue detail is ledger-derived, unlike the plain outstandingAmount
+  // column above it — gated on accounting read the same way invoice margin is,
+  // since it's a finer-grained view of the same sensitivity.
+  const canSeeAccounting = can(user.role, "accounting", "read") !== "none";
+  const accountStatus = canSeeAccounting ? await customerAccountStatus(customer.id) : null;
 
   return (
     <div className="space-y-6">
@@ -214,6 +222,26 @@ export default async function CustomerDetailPage({
                 <span className="text-muted-foreground">Outstanding</span>
                 <span className="font-medium">{inr(Number(customer.outstandingAmount))}</span>
               </div>
+              {accountStatus && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Overdue</span>
+                    <span className={`font-medium ${accountStatus.overdueAmount.isZero() ? "" : "text-destructive"}`}>
+                      {formatInr(accountStatus.overdueAmount)}
+                      {accountStatus.overdueInvoices.length > 0 &&
+                        ` (${accountStatus.overdueInvoices.length} invoice${accountStatus.overdueInvoices.length > 1 ? "s" : ""}, up to ${accountStatus.overdueInvoices[0].daysOverdue}d)`}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Last Payment</span>
+                    <span className="font-medium">
+                      {accountStatus.lastPaymentDate
+                        ? `${formatInr(accountStatus.lastPaymentAmount!)} on ${accountStatus.lastPaymentDate.toISOString().slice(0, 10)}`
+                        : "—"}
+                    </span>
+                  </div>
+                </>
+              )}
               {isDealerType && (
                 <>
                   <div className="flex items-center justify-between">

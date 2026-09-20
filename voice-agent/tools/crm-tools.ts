@@ -10,11 +10,20 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { PrismaClient } from "../../src/generated/prisma/client.js";
 import { ProductCategory } from "../../src/generated/prisma/enums.js";
 import { plivoClient, getOrCreateEndpoint } from "../../src/lib/plivo.js";
+import { customerAccountStatus } from "../../src/lib/accounting/receivables.js";
+import { logAudit } from "../../src/lib/audit.js";
 import { AUTO_QUOTE_TOOL, executeCreateQuotation } from "./quotation-tool.js";
 
 export type ToolContext = {
   prisma: PrismaClient;
   leadId: string;
+  /**
+   * Set only when this call's Lead has actually converted to a Customer
+   * (`Customer.sourceLeadId`), resolved once in server.ts — never guessed
+   * from anything said on the call. `get_account_status` refuses to
+   * disclose any figure while this is null.
+   */
+  customerId: string | null;
   callId: string;
   providerCallSid: string | null;
   originUrl: string;
@@ -144,6 +153,23 @@ const BASE_TOOLS: ChatCompletionTool[] = [
   },
 ];
 
+// Phase 6: the caller's own outstanding balance, overdue invoices and last
+// payment. Gated the same way create_quotation is — invisible to the model
+// unless AI_FINANCIAL_DISCLOSURE_ENABLED is exactly "true" — because this
+// discloses real financial figures over a phone call with no caller-identity
+// verification beyond "we dialed this Lead's own number on file." The tool
+// itself refuses (see executeCrmTool below) whenever the Lead has never
+// actually converted to a Customer, regardless of the flag.
+const ACCOUNT_STATUS_TOOL: ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "get_account_status",
+    description:
+      "Get this caller's account status if they are an existing customer: outstanding balance, credit limit, any overdue invoices, and the date of their last payment. Use only when they ask about their balance, dues, an overdue reminder, or their account. If it reports no linked account, do not guess a figure — offer schedule_follow_up or transfer_to_human instead.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
+
 // Phase 5 of the sales-funnel automation roadmap: the tool schema itself is
 // invisible to the model when AI_AUTO_QUOTE_ENABLED isn't "true", not just
 // rejected at execution time — one more layer than transfer_to_human's
@@ -152,6 +178,7 @@ const BASE_TOOLS: ChatCompletionTool[] = [
 export const CRM_TOOLS: ChatCompletionTool[] = [
   ...BASE_TOOLS,
   ...(process.env.AI_AUTO_QUOTE_ENABLED === "true" ? [AUTO_QUOTE_TOOL] : []),
+  ...(process.env.AI_FINANCIAL_DISCLOSURE_ENABLED === "true" ? [ACCOUNT_STATUS_TOOL] : []),
 ];
 
 /**
@@ -285,6 +312,56 @@ export async function executeCrmTool(
         select: { quotationNumber: true, status: true, totalAmount: true, validUntil: true },
       });
       return { output: quotation ? { ...quotation } : { message: "No quotation found for this lead" } };
+    }
+
+    case "get_account_status": {
+      // Refuses regardless of the flag if this Lead never actually became a
+      // Customer — customerId is resolved once in server.ts from
+      // Customer.sourceLeadId, never guessed from anything said on the call.
+      if (!ctx.customerId) {
+        return {
+          output: {
+            hasAccount: false,
+            message: "No customer account is linked to this lead. Do not guess a figure — offer a callback or transfer.",
+          },
+        };
+      }
+
+      const status = await customerAccountStatus(ctx.customerId, new Date(), ctx.prisma);
+
+      const lead = await ctx.prisma.lead.findUnique({ where: { id: ctx.leadId }, select: { assignedToId: true } });
+      const attributedTo = lead?.assignedToId ?? process.env.AI_CALL_FALLBACK_USER_ID;
+      if (attributedTo) {
+        await logAudit({
+          userId: attributedTo,
+          action: "VIEW",
+          entityType: "Customer",
+          entityId: ctx.customerId,
+          newValue: {
+            source: "ai_voice_agent",
+            callId: ctx.callId,
+            disclosed: "account_status",
+            outstanding: status.outstanding.toFixed(2),
+          },
+        });
+      } else {
+        // Never let a missing attribution silently skip the audit trail for
+        // a real financial disclosure — log it as unattributed instead.
+        console.error(`[tool ${ctx.callId}] get_account_status: no user to attribute this disclosure to`);
+      }
+
+      return {
+        output: {
+          hasAccount: true,
+          outstandingBalance: status.outstanding.toFixed(2),
+          creditLimit: status.creditLimit ? status.creditLimit.toFixed(2) : null,
+          overdueAmount: status.overdueAmount.toFixed(2),
+          overdueInvoiceCount: status.overdueInvoices.length,
+          mostOverdueDays: status.overdueInvoices[0]?.daysOverdue ?? 0,
+          lastPaymentDate: status.lastPaymentDate ? status.lastPaymentDate.toISOString().slice(0, 10) : null,
+          lastPaymentAmount: status.lastPaymentAmount ? status.lastPaymentAmount.toFixed(2) : null,
+        },
+      };
     }
 
     case "schedule_follow_up": {

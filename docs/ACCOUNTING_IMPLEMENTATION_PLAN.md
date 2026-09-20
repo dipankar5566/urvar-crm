@@ -288,11 +288,77 @@ with a native GET-query-param date filter, no Server Actions or client
 JavaScript needed since nothing here writes. 11 new tests
 (`tests/financial-reports.test.ts`).
 
-## Phase 6 — CRM integration
+## Phase 6 — CRM integration (done, 2026-09-20)
 
-Customer financial summary, role-aware sales visibility, overdue context on
-follow-ups, read-only AI agent financial context. Requires explicit
-authorization before the voice agent reads any balance.
+**A real, pre-existing bug found and fixed first.** Both `customerReceivable()`
+and `supplierPayable()` filtered `entry: { status: "POSTED" }`. When an
+invoice is cancelled, `reverseJournalEntry` flips the ORIGINAL entry's status
+to `REVERSED` and posts a new mirror entry — the filter excluded the
+original's real debit/credit while still counting the reversal's, leaving
+every cancelled invoice's effect as a phantom balance instead of netting to
+zero. Same bug class as the point-in-time filtering fix in Phase 5's
+`financial-reports.ts`, found here because the new account-status feature
+below builds directly on `customerReceivable()`. Fixed in both functions
+(filter out only `DRAFT`, never actually written), with a regression test in
+each of `tests/receivables.test.ts` and `tests/payables.test.ts`. Checked
+production directly: zero `SalesInvoice`/`PurchaseInvoice` rows exist yet, so
+no real balance was ever actually corrupted by this — the fix is preventive.
+
+**`customerAccountStatus()`** (`src/lib/accounting/receivables.ts`) is the one
+place "what can a customer be told about their account" is defined —
+outstanding balance, credit limit, overdue invoices with days-overdue, and
+last payment. Both the customer detail page and the voice agent's new tool
+call it, so the two surfaces can never disagree.
+
+**Customer detail page**: an Overdue / Last Payment section, gated behind
+`accounting` read access (not just `customers` read) the same reason invoice
+margin is gated in Phase 4 — it's ledger detail, not the plain
+`outstandingAmount` column already visible to sales roles.
+
+**Follow-ups**: fixed a real pre-existing bug — `FollowUp.customerId` has
+existed since the model was created, but the list query only ever included
+`lead`, so a customer-linked follow-up silently rendered "—" instead of the
+customer's name. Fixed alongside adding a lightweight outstanding-balance
+indicator (the already-synced `Customer.outstandingAmount` column, not a
+per-row ledger query against a 200-row paginated list).
+
+**AI agent financial context — the piece requiring explicit authorization.**
+Asked the user directly, since the plan's own gate required it, and grounded
+the question in what the codebase actually does: the voice agent's
+`ToolContext` had no `customerId` at all, and there is **no caller-identity
+verification anywhere in the calling stack** — every AI call is outbound,
+dialed to a Lead's number on file, so "who is this call ostensibly with" was
+never established. The user chose the fuller option: the agent may state real
+figures. Built as `get_account_status`
+(`voice-agent/tools/crm-tools.ts`), gated behind `AI_FINANCIAL_DISCLOSURE_ENABLED`
+(default `"false"`, fail-closed like every other AI-write flag) — a schema
+the model doesn't even see when off, same pattern as `create_quotation`.
+
+Even with the flag on, the tool independently refuses whenever
+`ctx.customerId` is unset. That id is resolved exactly once, in
+`server.ts`, from `Customer.sourceLeadId` — an authoritative conversion
+record, never a phone-number or name-based guess — so a Lead who has never
+actually become a paying Customer gets "no linked account," not a guess. The
+residual risk is real and documented rather than hidden: whoever physically
+answers the dialed phone is presumed to be that Lead/Customer, the same
+assumption every ordinary business call already makes, weaker than a PIN or
+OTP but the strongest signal available without new verification
+infrastructure. Every actual disclosure is audit-logged (`AuditLog`,
+`action: "VIEW"`, tied to the `callId`) — viewing a customer's financial data
+was not tracked anywhere before this. `"VIEW"` was also missing from the
+audit-logs page's `ACTIONS` filter array — the same "the row existed and was
+unfilterable" gap this plan already caught twice before (Phase 2's
+`SalesInvoice`/`Receipt`, Phase 3's `SupplierPayment`/`Expense`/`Supplier`) —
+fixed proactively this time.
+
+The system prompt only mentions the tool at all when the flag is on, and
+instructs the model to never state a figure it wasn't handed by the tool's
+actual response. `npm run eval:agent` was run after the prompt/tool change
+(flag off, matching what ships): 70/71 and 70/71 checks on the two providers,
+both failures pre-existing scheduling-tool ambiguity unrelated to this
+change. No scripted eval scenario exercises `get_account_status` itself —
+noted as a coverage gap, not exercised because the harness has no "customer
+asks about their balance" scenario today.
 
 ## Vyapar migration
 

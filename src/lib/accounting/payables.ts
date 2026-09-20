@@ -9,6 +9,11 @@ import { sub, sum, type Money } from "./money";
  * Mirrors src/lib/accounting/receivables.ts exactly, direction reversed:
  * AP_TRADE is a CREDIT-normal account, so a purchase invoice (credit)
  * increases what's owed and a supplier payment (debit) reduces it.
+ *
+ * Same fix as `customerReceivable()`: filters out only `DRAFT`, not `{
+ * status: "POSTED" }` — the latter excluded a cancelled invoice's original
+ * (now REVERSED) entry while still counting its reversal, leaving a phantom
+ * balance instead of netting to zero.
  */
 export async function supplierPayable(
   supplierId: string,
@@ -22,7 +27,7 @@ export async function supplierPayable(
       accountId: apAccountId,
       partyType: "SUPPLIER",
       partyId: supplierId,
-      entry: { status: "POSTED" },
+      entry: { status: { not: "DRAFT" } },
     },
     select: { debit: true, credit: true },
   });

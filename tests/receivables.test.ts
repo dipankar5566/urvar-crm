@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createInvoiceFromOrder } from "@/lib/accounting/invoicing";
+import { createInvoiceFromOrder, cancelInvoice } from "@/lib/accounting/invoicing";
 import { recordReceipt } from "@/lib/accounting/receipts";
-import { customerReceivable, syncCustomerOutstanding, reconcileOutstandingAmounts } from "@/lib/accounting/receivables";
+import {
+  customerReceivable, syncCustomerOutstanding, reconcileOutstandingAmounts, customerAccountStatus,
+} from "@/lib/accounting/receivables";
 import { toAmountString } from "@/lib/accounting/money";
 import {
-  withRollback, testUserId, openPeriodDate, ensureVerifiedTaxRate, testProduct, testCustomer, testOrderWithLine,
+  withRollback, testUserId, accountId, openPeriodDate, ensureVerifiedTaxRate, testProduct, testCustomer, testOrderWithLine,
 } from "./helpers/db";
 
 describe("customerReceivable(): R1 — a real number instead of a hand-typed one", () => {
@@ -144,6 +146,109 @@ describe("reconcileOutstandingAmounts()", () => {
       const rows = await reconcileOutstandingAmounts(tx);
       const row = rows.find((r) => r.customerId === customer.id);
       expect(row!.matches).toBe(true);
+    });
+  });
+});
+
+describe("customerReceivable(): cancellation regression", () => {
+  it("nets to zero after the only invoice is cancelled, not a phantom negative balance", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 10, unitPrice: 100,
+      });
+      const invoice = await createInvoiceFromOrder({ orderId: order.id, invoiceDate: date, createdById: userId }, tx);
+      expect(toAmountString(await customerReceivable(customer.id, tx))).toBe("1050.00");
+
+      await cancelInvoice({ invoiceId: invoice.invoiceId, reason: "Test cancellation", cancelledById: userId }, tx);
+
+      // Before the fix, filtering journal lines to entry status "POSTED"
+      // excluded the original (now REVERSED) debit while still counting the
+      // reversal's credit, leaving this at -1050.00 instead of 0.00.
+      expect(toAmountString(await customerReceivable(customer.id, tx))).toBe("0.00");
+    });
+  });
+});
+
+describe("customerAccountStatus()", () => {
+  it("reports no overdue invoices and no payment history for a customer with none", async () => {
+    await withRollback(async (tx) => {
+      const customer = await testCustomer(tx);
+      const status = await customerAccountStatus(customer.id, new Date(), tx);
+      expect(toAmountString(status.outstanding)).toBe("0.00");
+      expect(status.overdueInvoices).toHaveLength(0);
+      expect(status.lastPaymentDate).toBeNull();
+    });
+  });
+
+  it("flags a POSTED invoice past its due date as overdue, with the correct days-overdue and outstanding amount", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 10, unitPrice: 100,
+      });
+      const dueDate = new Date(date.getTime() + 5 * 24 * 60 * 60 * 1000);
+      await createInvoiceFromOrder({ orderId: order.id, invoiceDate: date, dueDate, createdById: userId }, tx);
+
+      const asOf = new Date(dueDate.getTime() + 10 * 24 * 60 * 60 * 1000);
+      const status = await customerAccountStatus(customer.id, asOf, tx);
+
+      expect(status.overdueInvoices).toHaveLength(1);
+      expect(status.overdueInvoices[0].daysOverdue).toBe(10);
+      expect(toAmountString(status.overdueInvoices[0].outstanding)).toBe("1050.00");
+      expect(toAmountString(status.overdueAmount)).toBe("1050.00");
+    });
+  });
+
+  it("does not flag an invoice whose due date has not yet passed", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 1, unitPrice: 100,
+      });
+      const dueDate = new Date(date.getTime() + 30 * 24 * 60 * 60 * 1000);
+      await createInvoiceFromOrder({ orderId: order.id, invoiceDate: date, dueDate, createdById: userId }, tx);
+
+      const status = await customerAccountStatus(customer.id, date, tx);
+      expect(status.overdueInvoices).toHaveLength(0);
+    });
+  });
+
+  it("reports the last posted receipt as payment history", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const customer = await testCustomer(tx, { state: "West Bengal" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 1, unitPrice: 100,
+      });
+      const invoice = await createInvoiceFromOrder({ orderId: order.id, invoiceDate: date, createdById: userId }, tx);
+      const cashAccountId = await accountId(tx, "1110");
+      await recordReceipt(
+        {
+          receiptDate: date, customerId: customer.id, amount: "50", method: "CASH", depositAccountId: cashAccountId,
+          allocations: [{ invoiceId: invoice.invoiceId, amount: "50" }], createdById: userId,
+        },
+        tx,
+      );
+
+      const status = await customerAccountStatus(customer.id, date, tx);
+      expect(status.lastPaymentDate).not.toBeNull();
+      expect(toAmountString(status.lastPaymentAmount!)).toBe("50.00");
     });
   });
 });

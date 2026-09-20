@@ -62,6 +62,11 @@ const ACTIONS = [
   "OPEN_FINANCIAL_YEAR",
   "APPROVE",
   "REJECT",
+  // Phase 6: the AI voice agent's get_account_status tool logs one of these
+  // every time it actually discloses a customer's financial figures on a
+  // call — same "the row existed and was unfilterable" gap the last two
+  // phases each caught once, fixed proactively here instead.
+  "VIEW",
 ];
 
 export default async function AuditLogsPage({

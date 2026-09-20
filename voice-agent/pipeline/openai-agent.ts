@@ -227,6 +227,10 @@ export function buildSystemPrompt(
   // off (the common case today), leave the existing "you cannot send a
   // quotation yourself" wording untouched below.
   const autoQuoteEnabled = process.env.AI_AUTO_QUOTE_ENABLED === "true";
+  // Phase 6: dark by default, same reasoning as autoQuoteEnabled — leave the
+  // prompt silent about account balances entirely when off, rather than
+  // describing a tool the model has no schema for.
+  const financialDisclosureEnabled = process.env.AI_FINANCIAL_DISCLOSURE_ENABLED === "true";
   // Only an Indic language has a script to insist on, and the rule has to be
   // absent (not merely inapplicable) on an English call: interpolated, it read
   // "Write Indian English in its own native script ... Bengali in Bengali
@@ -267,7 +271,7 @@ Rules:
 - Sound warm and human: react to what they just said in two or three words before moving on, and vary your wording rather than opening every turn the same way.
 - Start the call in ${language}, because that is this lead's regional language. If they reply in a different language, switch immediately and match them from then on, including Hindi/English/Bengali code-switching.
 ${scriptRule}
-- The lead's details AND the full catalogue above are already loaded — do NOT call get_lead_context or get_product_info for anything already listed there. Answer price and pack-size questions straight from the list, because a tool call is a second of silence on a live phone call. Only use get_product_info if they ask about something not on the list at all. Use check_quotation_status when they ask about a quotation.${autoQuoteEnabled ? " Use create_quotation only for a simple standard reorder from an existing customer — never state a price yourself, only what its response confirms." : ""}
+- The lead's details AND the full catalogue above are already loaded — do NOT call get_lead_context or get_product_info for anything already listed there. Answer price and pack-size questions straight from the list, because a tool call is a second of silence on a live phone call. Only use get_product_info if they ask about something not on the list at all. Use check_quotation_status when they ask about a quotation.${autoQuoteEnabled ? " Use create_quotation only for a simple standard reorder from an existing customer — never state a price yourself, only what its response confirms." : ""}${financialDisclosureEnabled ? " If they ask about their balance, dues, an overdue amount, or their account, call get_account_status — never state a figure from memory or guess one, only what its response actually returns. If it reports no linked account, say you cannot pull that up on this call and offer a callback or transfer, never a number." : ""}
 - You may be interrupted mid-sentence. If you are told you were cut off, do NOT restart your pitch — answer what they just said and carry on from where you were. (Asking who you are is the exception above: always answer that.)
 - Don't repeat a question you have already asked. If the lead only says "hello" or "bataiye", assume they simply did not catch the last line: rephrase it once, more briefly, rather than starting over.
 - Speech-to-text sometimes splits one answer into several short fragments (e.g. "we" then, a moment later, "Harmicompost"). If what you were just told looks like an incomplete sentence fragment rather than a real non-answer — a trailing word, a lone noun, something that reads like it was cut off — do NOT treat it as a failure to hear and do NOT re-ask your last question verbatim. Instead, briefly invite them to continue with a short "yes, go on" in the language you are speaking, so the rest of their answer can land, and only ask the full question again if the next thing they say still doesn't answer it.
@@ -278,7 +282,7 @@ ${scriptRule}
 - If they want a callback at a specific time, call schedule_follow_up.
 - End the call only when the lead has nothing further — they have said goodbye or thanks, confirmed they are done, or clearly said they are not interested. When that happens, say a brief goodbye and call end_call in the same turn. Never just stop responding.
 - NEVER end the call in the same turn the lead states a requirement, quantity, crop or delivery need. That is a buying signal, not a goodbye. Confirm what you heard, answer anything they asked, and ask whether they need anything else first.
-- Never invent product details, prices, or availability you weren't given by a tool.`;
+- Never invent product details, prices, or availability you weren't given by a tool.${financialDisclosureEnabled ? " Never invent or estimate a balance, credit limit, or overdue amount either — only get_account_status's actual response." : ""}`;
 }
 
 /** Timings this module owns, handed back to the caller rather than logged

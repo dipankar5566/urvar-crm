@@ -7,10 +7,12 @@ npm test          # vitest run
 npm run test:watch
 ```
 
-176 tests across fifteen files (62 from Phase 1, 47 added in Phase 2, 33
-added in Phase 3, 23 added in Phase 4, 11 added in Phase 5). This is the
-repo's first automated test suite; everything outside `src/lib/accounting/`
-still has no coverage.
+182 tests across fifteen files (62 from Phase 1, 47 added in Phase 2, 33
+added in Phase 3, 23 added in Phase 4, 11 added in Phase 5, 6 added in Phase
+6). This is the repo's first automated test suite; everything outside
+`src/lib/accounting/` still has no coverage — Phase 6's voice-agent tool
+wiring is exercised only by `npm run eval:agent`, and even that harness has
+no scripted scenario for `get_account_status` itself (see below).
 
 ## The constraint that shapes everything
 
@@ -223,3 +225,27 @@ equity as Current Earnings. `gstTaxSummary()`: output tax from a sales
 invoice and input tax from a purchase invoice both compute correctly and net
 to the right payable figure. `gstOutwardSupplyRegister()`: a posted invoice's
 HSN and taxable value appear; a cancelled invoice is excluded.
+
+## Phase 6 coverage (implemented)
+
+### `tests/receivables.test.ts` / `tests/payables.test.ts` additions — 2 regression tests
+The bug found while building this phase: `customerReceivable()`/
+`supplierPayable()` filtered `entry: { status: "POSTED" }`, which excluded a
+cancelled invoice's original (now `REVERSED`) entry while still counting its
+reversal — each test posts an invoice, cancels it, and asserts the balance
+nets to `0.00`, not the phantom negative the bug produced.
+
+### `tests/receivables.test.ts` — `customerAccountStatus()`, 4 tests
+No overdue invoices or payment history for a clean customer; a `POSTED`
+invoice past its due date is flagged with the correct days-overdue and
+outstanding amount; an invoice not yet past its due date is not flagged; the
+last posted receipt appears as payment history.
+
+Not covered by Vitest — voice-agent code has no unit-test harness, only
+`npm run eval:agent`: the `get_account_status` tool's wiring (customerId
+resolution from `Customer.sourceLeadId`, the `AI_FINANCIAL_DISCLOSURE_ENABLED`
+gate, the audit-log write on disclosure). Verified manually by reading the
+code path and by `npx tsc`/`npm run lint`/`npm run build` all passing; the
+eval harness itself has no scripted "customer asks about their balance"
+scenario, a real coverage gap worth closing before this flag is ever flipped
+on in production.

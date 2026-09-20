@@ -15,6 +15,17 @@ import { money, sub, sum, type Money } from "./money";
  * This does not touch the column. It computes the number the column *should*
  * hold, for `syncCustomerOutstanding` (below) and for anything that wants the
  * true balance without waiting for a sync.
+ *
+ * Filters `entry.status` to exclude only `DRAFT` (never actually written by
+ * `postJournalEntry`, which always writes `POSTED`) — not `{ status:
+ * "POSTED" }`, which was the bug here until Phase 6: when an invoice is
+ * cancelled, `reverseJournalEntry` flips the ORIGINAL entry's status to
+ * `REVERSED` and posts a new mirror entry. A `status: "POSTED"` filter then
+ * excluded the original's real debit while still counting the reversal's
+ * credit, leaving every cancelled invoice's effect as a phantom negative
+ * balance instead of netting to zero. Found while building the Phase 6
+ * account-status feature this function now feeds directly to a live phone
+ * call — see the identical fix and explanation in `financial-reports.ts`.
  */
 export async function customerReceivable(
   customerId: string,
@@ -28,7 +39,7 @@ export async function customerReceivable(
       accountId: arAccountId,
       partyType: "CUSTOMER",
       partyId: customerId,
-      entry: { status: "POSTED" },
+      entry: { status: { not: "DRAFT" } },
     },
     select: { debit: true, credit: true },
   });
@@ -36,6 +47,83 @@ export async function customerReceivable(
   // AR is a DEBIT-normal account: debits (invoices) increase the receivable,
   // credits (receipts) decrease it.
   return sub(sum(lines.map((l) => l.debit)), sum(lines.map((l) => l.credit)));
+}
+
+export type OverdueInvoiceSummary = {
+  invoiceNumber: string;
+  dueDate: Date;
+  daysOverdue: number;
+  outstanding: Money;
+};
+
+export type CustomerAccountStatus = {
+  customerId: string;
+  outstanding: Money;
+  creditLimit: Money | null;
+  overdueInvoices: OverdueInvoiceSummary[];
+  overdueAmount: Money;
+  lastPaymentDate: Date | null;
+  lastPaymentAmount: Money | null;
+};
+
+/**
+ * A customer's account at a glance — outstanding balance, credit limit,
+ * which invoices are overdue and by how much, and the last payment on file.
+ *
+ * Phase 6: this is the one function both the customer detail page and the
+ * voice agent's `get_account_status` tool call, so "what can this customer
+ * be told about their account" is defined in exactly one place. Everything
+ * here is derived from posted ledger and document data — nothing is a
+ * stored, unreconciled column.
+ */
+export async function customerAccountStatus(
+  customerId: string,
+  asOfDate: Date = new Date(),
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<CustomerAccountStatus> {
+  const { outstandingOnInvoice } = await import("./receipts");
+
+  const customer = await db.customer.findUniqueOrThrow({
+    where: { id: customerId },
+    select: { creditLimit: true },
+  });
+
+  const outstanding = await customerReceivable(customerId, db);
+
+  const candidates = await db.salesInvoice.findMany({
+    where: {
+      customerId,
+      status: { in: ["POSTED", "PARTIALLY_PAID"] },
+      dueDate: { lt: asOfDate },
+    },
+    select: { id: true, invoiceNumber: true, dueDate: true },
+  });
+
+  const overdueInvoices: OverdueInvoiceSummary[] = [];
+  for (const inv of candidates) {
+    if (!inv.dueDate) continue;
+    const due = await outstandingOnInvoice(inv.id, db);
+    if (due.isZero()) continue;
+    const daysOverdue = Math.floor((asOfDate.getTime() - inv.dueDate.getTime()) / (24 * 60 * 60 * 1000));
+    overdueInvoices.push({ invoiceNumber: inv.invoiceNumber, dueDate: inv.dueDate, daysOverdue, outstanding: due });
+  }
+  overdueInvoices.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+  const lastReceipt = await db.receipt.findFirst({
+    where: { customerId, status: "POSTED" },
+    orderBy: { receiptDate: "desc" },
+    select: { receiptDate: true, amount: true },
+  });
+
+  return {
+    customerId,
+    outstanding,
+    creditLimit: customer.creditLimit ? money(customer.creditLimit) : null,
+    overdueInvoices,
+    overdueAmount: sum(overdueInvoices.map((i) => i.outstanding)),
+    lastPaymentDate: lastReceipt?.receiptDate ?? null,
+    lastPaymentAmount: lastReceipt ? money(lastReceipt.amount) : null,
+  };
 }
 
 /**
