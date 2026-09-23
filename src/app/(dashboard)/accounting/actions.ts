@@ -171,3 +171,48 @@ export async function openFinancialYear(financialYear: number): Promise<ActionRe
   revalidatePath("/accounting/periods");
   return { success: true };
 }
+
+/**
+ * Sign off a `TaxRate` row so the tax engine will price invoices against it.
+ *
+ * `resolveTaxRate()` (src/lib/accounting/tax.ts) refuses to price a line from
+ * any row with `isVerified: false` — seeded rates start unverified on purpose
+ * (see scripts/seed-accounting.ts). This is the only place that flips the
+ * flag, and it requires a note recording the basis for sign-off rather than
+ * treating it as a formality.
+ */
+export async function verifyTaxRate(taxRateId: string, note: string): Promise<ActionResult> {
+  const user = await requireUser();
+  assertCan(user.role, "gst", "approve");
+  if (!note.trim()) return { error: "A verification note is required." };
+
+  const rate = await prisma.taxRate.findUnique({ where: { id: taxRateId } });
+  if (!rate) return { error: "That tax rate does not exist." };
+  if (rate.isVerified) return { error: "Already verified." };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.taxRate.update({
+      where: { id: taxRateId },
+      data: { isVerified: true, verifiedNote: note.trim() },
+    });
+    await logAudit(
+      {
+        userId: user.id,
+        action: "VERIFY_TAX_RATE",
+        entityType: "TaxRate",
+        entityId: taxRateId,
+        oldValue: { isVerified: false },
+        newValue: {
+          isVerified: true,
+          hsnCode: rate.hsnCode,
+          ratePercent: rate.ratePercent.toString(),
+          note: note.trim(),
+        },
+      },
+      tx,
+    );
+  });
+
+  revalidatePath("/accounting/tax-rates");
+  return { success: true };
+}

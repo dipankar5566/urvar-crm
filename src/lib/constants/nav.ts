@@ -51,6 +51,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Periods", href: "/accounting/periods", icon: "CalendarRange", module: "accounting", section: "accounts" },
   { label: "Inventory Valuation", href: "/accounting/inventory", icon: "Boxes", module: "accounting", section: "accounts" },
   { label: "Financial Reports", href: "/accounting/reports", icon: "LineChart", module: "accounting", section: "accounts" },
+  // Gated by `gst`, not `accounting` — verifying a rate is a tax sign-off,
+  // not general bookkeeping, though today both scope to the same two roles.
+  { label: "Tax Rates", href: "/accounting/tax-rates", icon: "ShieldCheck", module: "gst", section: "accounts" },
   // Procurement sits under Admin, not Sales: only SUPER_ADMIN and
   // ACCOUNTS_TEAM have `purchases` read access, so sales roles never see it.
   { label: "Purchases", href: "/purchases", icon: "Receipt", module: "purchases", section: "admin" },
