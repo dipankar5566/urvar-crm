@@ -20,6 +20,12 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // refresh once per day
+    // Signed-cookie session cache: getSession() validates the cookie instead
+    // of querying Session + User on every request. Role/isActive/territory
+    // are still re-read live by getCurrentUser() (src/lib/session.ts), so a
+    // deactivated user is blocked immediately; the only staleness is that a
+    // revoked session token can stay valid for up to maxAge.
+    cookieCache: { enabled: true, maxAge: 5 * 60 },
   },
   user: {
     additionalFields: {

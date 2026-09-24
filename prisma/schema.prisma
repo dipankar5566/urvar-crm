@@ -410,6 +410,8 @@ model Lead {
   @@index([state])
   @@index([assignedToId])
   @@index([createdAt])
+  // Import duplicate detection and phone lookups filter on `phone IN (...)`.
+  @@index([phone])
 }
 
 model Pipeline {
@@ -510,6 +512,8 @@ model Call {
   @@index([customerId])
   @@index([userId, calledAt])
   @@index([callMode])
+  // Dashboard "calls today" counts across all users by time only.
+  @@index([calledAt])
 }
 
 model FollowUp {
@@ -534,6 +538,8 @@ model FollowUp {
 
   @@index([assignedToId, dueAt])
   @@index([status])
+  // Reminder cron and dashboard filter `status = PENDING AND dueAt < / between`.
+  @@index([status, dueAt])
 }
 
 model Task {
@@ -625,6 +631,7 @@ model Customer {
   @@index([customerType])
   @@index([state])
   @@index([assignedToId])
+  @@index([phone])
 }
 
 model Product {
@@ -713,6 +720,9 @@ model Quotation {
   @@index([status])
   @@index([customerId])
   @@index([createdById])
+  // Dashboard "sent today" and the reports date-range filters.
+  @@index([sentAt])
+  @@index([createdAt])
 }
 
 model QuotationItem {

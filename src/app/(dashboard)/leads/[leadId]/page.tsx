@@ -66,6 +66,10 @@ export default async function LeadDetailPage({
       pipeline: true,
       activities: {
         orderBy: { createdAt: "desc" },
+        // A long-lived lead accumulates calls/notes/status changes without
+        // bound; the timeline shows the most recent and the page shouldn't
+        // load the whole history on every view.
+        take: 50,
         include: { createdBy: { select: { name: true } } },
       },
       convertedCustomer: { select: { customerNumber: true } },

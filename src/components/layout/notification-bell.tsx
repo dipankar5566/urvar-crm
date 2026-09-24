@@ -42,12 +42,28 @@ export function NotificationBell({
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
 
   useEffect(() => {
-    const interval = setInterval(async () => {
-      const data = await getRecentNotifications();
-      setNotifications(data.notifications);
-      setUnreadCount(data.unreadCount);
-    }, 30000);
-    return () => clearInterval(interval);
+    // Each poll is a Server Action (~4 queries incl. auth), so don't spend
+    // it on a tab nobody is looking at: skip while hidden and catch up once
+    // when the tab becomes visible again. A failed poll (e.g. a tab left
+    // open across a deploy, whose action id no longer exists) is swallowed —
+    // the next tick or a page reload recovers.
+    async function refresh() {
+      if (document.hidden) return;
+      try {
+        const data = await getRecentNotifications();
+        setNotifications(data.notifications);
+        setUnreadCount(data.unreadCount);
+      } catch {
+        // keep the last known notifications
+      }
+    }
+
+    const interval = setInterval(refresh, 60000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, []);
 
   async function onSelect(n: NotificationItem) {

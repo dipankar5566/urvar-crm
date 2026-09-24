@@ -34,19 +34,23 @@ export async function customerReceivable(
   const map = await loadAccountMap(db);
   const arAccountId = requireAccount(map, "AR_TRADE");
 
-  const lines = await db.journalLine.findMany({
+  // Summed in SQL rather than fetching every AR line into JS — a customer with
+  // years of invoices/receipts is one row back, not thousands. `_sum` on a
+  // Decimal column is exact (Postgres NUMERIC), and `money()` accepts the
+  // null it returns for a customer with no lines.
+  const totals = await db.journalLine.aggregate({
     where: {
       accountId: arAccountId,
       partyType: "CUSTOMER",
       partyId: customerId,
       entry: { status: { not: "DRAFT" } },
     },
-    select: { debit: true, credit: true },
+    _sum: { debit: true, credit: true },
   });
 
   // AR is a DEBIT-normal account: debits (invoices) increase the receivable,
   // credits (receipts) decrease it.
-  return sub(sum(lines.map((l) => l.debit)), sum(lines.map((l) => l.credit)));
+  return sub(totals._sum.debit, totals._sum.credit);
 }
 
 export type OverdueInvoiceSummary = {
@@ -165,9 +169,27 @@ export async function reconcileOutstandingAmounts(
     select: { id: true, name: true, outstandingAmount: true },
   });
 
+  // One grouped query for every customer's ledger balance, not
+  // customerReceivable() per customer (which was 2 queries each — the account
+  // map lookup plus the line fetch). Same account, party and status filter.
+  const map = await loadAccountMap(db);
+  const arAccountId = requireAccount(map, "AR_TRADE");
+  const grouped = await db.journalLine.groupBy({
+    by: ["partyId"],
+    where: {
+      accountId: arAccountId,
+      partyType: "CUSTOMER",
+      entry: { status: { not: "DRAFT" } },
+    },
+    _sum: { debit: true, credit: true },
+  });
+  const ledgerByCustomer = new Map(
+    grouped.map((g) => [g.partyId, sub(g._sum.debit, g._sum.credit)]),
+  );
+
   const rows: ReconciliationRow[] = [];
   for (const c of customers) {
-    const ledger = await customerReceivable(c.id, db);
+    const ledger = ledgerByCustomer.get(c.id) ?? money(0);
     const stored = money(c.outstandingAmount);
     rows.push({
       customerId: c.id,
