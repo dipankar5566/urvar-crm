@@ -78,6 +78,19 @@ export function RecordReceiptForm({
   );
   const advance = Math.max(0, (Number(amount) || 0) - allocatedTotal);
 
+  // Base UI's <SelectValue> can only resolve a label for items that are
+  // mounted, and the list is unmounted while the dropdown is closed — so
+  // without `items` on the root it prints the raw value (a cuid) in the
+  // trigger. Passing value/label pairs is the supported fix.
+  const customerItems = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: `${c.name} (${c.customerNumber})` })),
+    [customers],
+  );
+  const accountItems = useMemo(
+    () => depositAccounts.map((a) => ({ value: a.id, label: `${a.code} ${a.name}` })),
+    [depositAccounts],
+  );
+
   async function submit() {
     if (!customerId) return toast.error("Select a customer.");
     if (!amount || Number(amount) <= 0) return toast.error("Enter a valid amount.");
@@ -115,14 +128,14 @@ export function RecordReceiptForm({
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
             <Label>Customer</Label>
-            <Select value={customerId} onValueChange={(v) => setCustomerId(v ?? "")}>
-              <SelectTrigger>
+            <Select items={customerItems} value={customerId} onValueChange={(v) => setCustomerId(v ?? "")}>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select a customer" />
               </SelectTrigger>
               <SelectContent>
-                {customers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name} ({c.customerNumber})
+                {customerItems.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -151,13 +164,13 @@ export function RecordReceiptForm({
           </div>
           <div className="space-y-2">
             <Label>Deposit To</Label>
-            <Select value={depositAccountId} onValueChange={(v) => setDepositAccountId(v ?? "")}>
-              <SelectTrigger>
-                <SelectValue />
+            <Select items={accountItems} value={depositAccountId} onValueChange={(v) => setDepositAccountId(v ?? "")}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select an account" />
               </SelectTrigger>
               <SelectContent>
-                {depositAccounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>
+                {accountItems.map((a) => (
+                  <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
