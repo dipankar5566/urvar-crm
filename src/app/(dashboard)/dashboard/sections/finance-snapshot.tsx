@@ -11,10 +11,14 @@ import {
   profitAndLoss,
   type AgeingBucketKey,
 } from "@/lib/accounting/financial-reports";
+import Link from "next/link";
 import type { User } from "@/generated/prisma/client";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DashboardPeriod } from "../period";
 import { SectionTitle, StatCard } from "./ui";
+
+/** Debtor rows shown on the dashboard; the full list lives in the AR ageing report. */
+const DEBTORS_SHOWN = 10;
 
 const BUCKET_ORDER: AgeingBucketKey[] = ["current", "d1_30", "d31_60", "d61_90", "d90_plus"];
 const BUCKET_COLOR: Record<AgeingBucketKey, string> = {
@@ -113,6 +117,23 @@ export async function FinanceSnapshot({
     amount: sum(ar.map((r) => r.buckets[key])),
   }));
 
+  // Debtors: one row per customer with money owed, largest first. The ageing
+  // function returns rows in map-insertion order, so sort here rather than
+  // rely on it. Overdue = everything outside the `current` (not yet due)
+  // bucket; `oldest` is the most-aged bucket that still holds a balance.
+  const debtors = ar
+    .filter((r) => r.total.greaterThan(0))
+    .sort((a, b) => b.total.comparedTo(a.total))
+    .map((r) => ({
+      id: r.partyId,
+      name: r.partyName,
+      total: r.total,
+      overdue: sub(r.total, r.buckets.current),
+      oldest: [...BUCKET_ORDER].reverse().find((k) => r.buckets[k].greaterThan(0)) ?? "current",
+    }));
+  const shownDebtors = debtors.slice(0, DEBTORS_SHOWN);
+  const hiddenDebtors = debtors.length - shownDebtors.length;
+
   return (
     <section className="space-y-2.5">
       <SectionTitle>Finance</SectionTitle>
@@ -189,6 +210,85 @@ export async function FinanceSnapshot({
           </CardContent>
         </Card>
       )}
+
+      <Card className="overflow-hidden p-0">
+        <CardHeader className="flex flex-row items-center justify-between border-b py-3">
+          <CardTitle className="text-sm">Debtors</CardTitle>
+          <Link
+            href="/accounting/reports/ar-ageing"
+            className="text-xs font-medium text-brand hover:underline"
+          >
+            View ageing
+          </Link>
+        </CardHeader>
+        <CardContent className="p-0">
+          {debtors.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-muted-foreground">No outstanding debtors.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-[11px] uppercase tracking-wide text-tertiary-foreground">
+                    <th className="px-4 py-2 text-left font-semibold">Customer</th>
+                    <th className="px-4 py-2 text-right font-semibold">Outstanding</th>
+                    <th className="px-4 py-2 text-right font-semibold">Overdue</th>
+                    <th className="px-4 py-2 text-right font-semibold">Oldest</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownDebtors.map((d) => (
+                    <tr key={d.id} className="border-b last:border-b-0 hover:bg-accent/40">
+                      <td className="max-w-[16rem] truncate px-4 py-2.5">
+                        <Link href={`/customers/${d.id}`} className="font-medium hover:underline">
+                          {d.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-semibold tabular-nums">
+                        {fmt(d.total)}
+                      </td>
+                      <td
+                        className={`px-4 py-2.5 text-right tabular-nums ${
+                          d.overdue.greaterThan(0) ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                        }`}
+                      >
+                        {d.overdue.greaterThan(0) ? fmt(d.overdue) : "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className={`h-2 w-2 rounded-full ${BUCKET_COLOR[d.oldest]}`} />
+                          {AGEING_BUCKET_LABELS[d.oldest]}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  {hiddenDebtors > 0 && (
+                    <tr className="border-t">
+                      <td colSpan={4} className="px-4 py-2 text-xs">
+                        <Link
+                          href="/accounting/reports/ar-ageing"
+                          className="font-medium text-brand hover:underline"
+                        >
+                          +{hiddenDebtors} more
+                        </Link>
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="border-t bg-muted/30 font-semibold">
+                    <td className="px-4 py-2.5">Total</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">{fmt(arTotal)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {arOverdue.greaterThan(0) ? fmt(arOverdue) : "—"}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }
