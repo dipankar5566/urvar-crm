@@ -13,11 +13,13 @@ dealers, retailers, FPOs, government tenders, and farmers).
 - **Better Auth** — email/password auth with role-based session
 - **Tailwind CSS v4 + shadcn/ui** (Base UI under the hood)
 - **next-themes** — dark mode
+- **Recharts** — dashboard and report charts
+- **Vitest** — tests for the accounting engine (run in a rolled-back transaction)
 
 ## Prerequisites
 
 - Node.js 20+
-- PostgreSQL 17 running on `localhost:5432`
+- PostgreSQL 18 running on `localhost:5432`
 
 ### PostgreSQL (this machine)
 
@@ -34,11 +36,19 @@ npm run db:generate     # generate the Prisma client
 npm run db:migrate      # apply migrations
 npm run db:seed         # load demo data
 npm run dev             # http://localhost:3000
+npm test                # accounting engine tests (see CLAUDE.md before running)
+npx tsc --noEmit        # type-check without touching the running build
 ```
+
+On the production box ports 3000–3003 belong to the PM2-hosted apps, and there
+is no separate dev database, so local dev needs a free port and auth-URL
+overrides — details in `CLAUDE.md`.
 
 ## Demo accounts
 
-All accounts use password **`Urvar@123`**:
+Created by `npm run db:seed` on a fresh database. They have been removed from
+the live `urvar_crm` database (only real admin accounts exist there), so don't
+expect them in production. All demo accounts use password **`Urvar@123`**:
 
 | Role | Email |
 | --- | --- |
@@ -52,7 +62,7 @@ All accounts use password **`Urvar@123`**:
 
 ```
 prisma/
-  schema.prisma          # full normalized schema (24 models)
+  schema.prisma          # full normalized schema (CRM + double-entry accounting)
   seed.ts                # demo data (users, products, leads, customers, quotations…)
 prisma.config.ts         # Prisma 7 config (datasource url lives here, not in schema)
 instrumentation.ts       # starts the due-reminder + AI backlog crons on server boot
@@ -66,9 +76,14 @@ src/
   app/
     (auth)/login/        # login page + form
     (dashboard)/         # authenticated app shell (sidebar + topbar)
-      dashboard/         # KPI dashboard (role-scoped metrics)
+      dashboard/         # role-aware dashboard: alerts, today, sales, finance
+                         # (cash/bank, debtors, creditors), field & calling
       leads/ pipeline/ calls/ follow-ups/ tasks/ field-visits/
       customers/ products/ quotations/ purchases/ reports/
+      invoices/ receipts/ credit-notes/ supplier-payments/ expenses/
+      accounting/        # chart of accounts, journal, periods, cash & bank,
+                         # loans, fixed assets, inventory valuation, tax rates,
+                         # financial reports
       users/ audit-logs/ # Super Admin only
     api/auth/[...all]/   # Better Auth handler
     api/quotations/accept/[token]/  # public customer accept-link (no session)
@@ -85,6 +100,10 @@ src/
     ai-call-dialer.ts    # shared AI outbound dialer (dashboard action + cron)
     ai-backlog-cron.ts   # outbound sweep over never-contacted leads (off by default)
     reminder-cron.ts     # due reminders, quotation chases, stale-lead escalation
+    accounting/          # ledger posting, invoicing, receipts, payables, loans,
+                         # fixed assets, GST/tax engine, financial reports
+    order-from-quotation.ts  # copies quotation lines onto an accepted order
+    receipt-allocation.ts    # oldest-first split of a receipt across invoices
     constants/           # territories, enum labels, nav config
   middleware.ts          # coarse auth gating (everything except /api/**)
 ```
@@ -104,6 +123,22 @@ All core modules are implemented: Leads, Pipeline, Calls, Follow-ups, Tasks,
 Field Visits, Customers/Distributors/Dealers, Products, Quotations, Reports,
 Audit logs, and Procurement (Purchases). See `CLAUDE.md` for module-by-module
 detail, RBAC specifics, and recent fixes.
+
+The app also carries a full **double-entry accounting layer**, migrated from
+Vyapar as opening balances: GST sales invoices raised from accepted orders,
+customer receipts (partial payments, on-account advances, allocation across
+invoices), credit notes, supplier bills and payments, itemised expenses, cash &
+bank, loans, fixed assets with depreciation, periodic stock valuation, and
+around two dozen financial reports (P&L, balance sheet, GST registers,
+AR/AP ageing, day book, party statements…). Every ledger write goes through a
+single posting service; posted entries are immutable and corrected only by
+reversal. Accounting is visible to Super Admin and Accounts Team only.
+
+The dashboard adapts to the viewer's role and a `?period=` preset (this month,
+FY to date, last 30 days): a needs-attention strip, today's activity, sales
+funnel and a 12-month revenue chart, and — for accounts roles — cash & bank,
+receivables/payables with debtor and creditor tables, profit, and loan and
+fixed-asset balances, all read from the same ledger functions as the reports.
 
 Beyond the original scope, the app also has a Plivo-based AI voice calling
 agent (bilingual English/Hindi/Bengali) that can autonomously handle
