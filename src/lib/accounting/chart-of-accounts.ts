@@ -123,7 +123,22 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "2160", name: "Other Payables", type: "LIABILITY", parent: "2100" },
 
   { code: "2200", name: "Long-term Liabilities", type: "LIABILITY", parent: "2000", ...GROUP },
-  { code: "2210", name: "Loans", type: "LIABILITY", parent: "2200" },
+  {
+    code: "2210",
+    name: "Loans",
+    type: "LIABILITY",
+    parent: "2200",
+    description:
+      "Pre-Phase-9 legacy balance from the Vyapar opening-balance migration " +
+      "(2026-09-20). Left untouched — real postings already exist against " +
+      "it. New loans created through the Phase 9 register get their own " +
+      "account under 2220, not this one.",
+  },
+  // Phase 9 — each loan created through the register gets its own child
+  // account here (2221, 2222, ...), following the same "few, named,
+  // accountant-created" logic bank accounts already use under 1120 — never
+  // 2210, which already carries a real pre-existing balance.
+  { code: "2220", name: "Loan Accounts", type: "LIABILITY", parent: "2200", ...GROUP },
 
   // ---------------------------------------------------------------- EQUITY
   { code: "3000", name: "Equity", type: "EQUITY", ...GROUP },
@@ -171,6 +186,13 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
       "Absorbs the sub-rupee adjustment when an invoice total is rounded to " +
       "the nearest rupee. Carries either side.",
   },
+  {
+    code: "4920",
+    name: "Gain / (Loss) on Asset Disposal",
+    type: "INCOME",
+    parent: "4000",
+    description: "Carries either side: a credit is a gain on disposal, a debit a loss.",
+  },
 
   // -------------------------------------------------------------- EXPENSES
   { code: "5000", name: "Expenses", type: "EXPENSE", ...GROUP },
@@ -199,6 +221,21 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "5530", name: "Commission", type: "EXPENSE", parent: "5500" },
 
   { code: "5600", name: "Depreciation", type: "EXPENSE", parent: "5000" },
+
+  // Phase 9 — Cash, Bank, Loans & Fixed Assets. 5400's tens (5410-5490) are
+  // fully consumed, so Finance Costs and Cash Short/Over sit as new
+  // hundred-blocks directly under 5000, matching how 5600 Depreciation
+  // already does — a standalone leaf, not shoehorned into a full group.
+  { code: "5700", name: "Finance Costs", type: "EXPENSE", parent: "5000", ...GROUP },
+  { code: "5710", name: "Interest Expense", type: "EXPENSE", parent: "5700" },
+
+  {
+    code: "5800",
+    name: "Cash Short / (Over)",
+    type: "EXPENSE",
+    parent: "5000",
+    description: "Carries either side: a debit is a shortage, a credit an overage found on a physical cash count.",
+  },
 ];
 
 /**
@@ -238,4 +275,8 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
 
   ROUND_OFF: "4910",
   OPENING_BALANCE_EQUITY: "3300",
+
+  INTEREST_EXPENSE: "5710",
+  ASSET_DISPOSAL_GAIN_LOSS: "4920",
+  CASH_SHORT_OVER: "5800",
 };

@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { assertCan } from "@/lib/permissions";
+import { assertCan, can } from "@/lib/permissions";
 import { formatInr, sum, toAmountString } from "@/lib/accounting/money";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/layout/page-header";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { ReverseEntryButton } from "./journal-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,8 @@ export default async function JournalPage({
 
   const { page } = await searchParams;
   const pageNum = Math.max(1, Number(page) || 1);
+  const canApprove = can(user.role, "accounting", "approve") !== "none";
+  const canWrite = can(user.role, "accounting", "write") !== "none";
 
   const [entries, total] = await Promise.all([
     prisma.journalEntry.findMany({
@@ -56,6 +60,11 @@ export default async function JournalPage({
           total === 0
             ? "No entries posted yet. Documents post here automatically once invoicing is live."
             : `${total} entr${total === 1 ? "y" : "ies"}. Posted entries are immutable — corrections are reversals.`
+        }
+        action={
+          canWrite && (
+            <Button size="sm" render={<Link href="/accounting/journal/new" />}>New Entry</Button>
+          )
         }
       />
 
@@ -95,9 +104,12 @@ export default async function JournalPage({
                         {entry.narration}
                       </div>
                     </div>
-                    <div className="text-right text-xs text-muted-foreground">
-                      <div>{entry.entryDate.toLocaleDateString("en-IN")} · {entry.period.label}</div>
-                      <div>by {entry.postedBy.name}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right text-xs text-muted-foreground">
+                        <div>{entry.entryDate.toLocaleDateString("en-IN")} · {entry.period.label}</div>
+                        <div>by {entry.postedBy.name}</div>
+                      </div>
+                      {canApprove && entry.status === "POSTED" && <ReverseEntryButton entryId={entry.id} />}
                     </div>
                   </div>
 

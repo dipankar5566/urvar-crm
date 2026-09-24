@@ -282,6 +282,12 @@ model User {
   expensesCreated         Expense[]              @relation("ExpenseCreator")
   expensesApproved        Expense[]              @relation("ExpenseApprover")
   stockValuationsCreated  StockValuation[]       @relation("StockValuationCreator")
+  // Phase 9 — Cash, Bank, Loans & Fixed Assets.
+  cashBankTxnsCreated        CashBankTransaction[] @relation("CashBankTxnCreator")
+  loansCreated               Loan[]                @relation("LoanCreator")
+  loanRepaymentsCreated      LoanRepayment[]       @relation("LoanRepaymentCreator")
+  fixedAssetsCreated         FixedAsset[]          @relation("FixedAssetCreator")
+  depreciationEntriesCreated DepreciationEntry[]   @relation("DepreciationEntryCreator")
 
   @@index([role])
 }
@@ -993,6 +999,10 @@ model PurchaseInvoice {
   items       PurchaseInvoiceItem[]
   files       File[]
   allocations SupplierPaymentAllocation[]
+  /// Set when this invoice's spend was capitalised into the fixed asset
+  /// register (Phase 9) rather than expensed — see FixedAsset's own comment
+  /// for why that is a reclassification off PURCHASES, never a second AP line.
+  capitalizedAsset FixedAsset?
   createdById String
   createdBy   User                        @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
   createdAt   DateTime                    @default(now())
@@ -1076,6 +1086,13 @@ enum JournalSourceType {
   STOCK_MOVEMENT
   OPENING_BALANCE
   REVERSAL
+  /// Phase 9 — Cash, Bank, Loans & Fixed Assets.
+  CASH_BANK_TRANSFER
+  LOAN
+  LOAN_REPAYMENT
+  FIXED_ASSET
+  DEPRECIATION
+  ASSET_DISPOSAL
 }
 
 enum JournalEntryStatus {
@@ -1187,6 +1204,14 @@ model LedgerAccount {
   supplierPaymentsSource SupplierPayment[] @relation("SupplierPaymentSource")
   expenseCategoryFor     Expense[]         @relation("ExpenseCategory")
   expensePaymentsSource  Expense[]         @relation("ExpensePaymentSource")
+  // Phase 9 — Cash, Bank, Loans & Fixed Assets.
+  cashBankTxnDebits        CashBankTransaction[] @relation("CashBankTxnDebit")
+  cashBankTxnCredits       CashBankTransaction[] @relation("CashBankTxnCredit")
+  loanAccountFor           Loan[]                @relation("LoanAccount")
+  loanDisbursements        Loan[]                @relation("LoanDisbursement")
+  loanRepaymentsSource     LoanRepayment[]       @relation("LoanRepaymentSource")
+  fixedAssetAccountFor     FixedAsset[]          @relation("FixedAssetAccount")
+  fixedAssetPaymentsSource FixedAsset[]          @relation("FixedAssetPaymentSource")
 
   @@index([type])
   @@index([parentId])
@@ -2011,4 +2036,247 @@ model StockValuationLine {
 
   @@unique([valuationId, productId])
   @@index([valuationId])
+}
+
+// ============================================================
+// CASH, BANK, LOANS & FIXED ASSETS (Phase 9)
+//
+// Same document→posting pattern as every model above: a business record is
+// created, then a separate posting step (posting.ts) emits the balanced
+// entry and stores postedEntryId; cancellation reverses the entry and stamps
+// cancelledAt. Nothing here writes JournalLine directly.
+//
+// Loans and fixed assets are deliberately sub-ledgers, not one LedgerAccount
+// per loan/asset — the same design AR/AP already uses (1130 Accounts
+// Receivable is one control account; per-customer detail lives on
+// JournalLine.partyType/partyId). Traceability here comes from
+// JournalEntry.sourceType + sourceId pointing at the register row instead,
+// since PartyType has no LOAN/ASSET member.
+// ============================================================
+
+enum CashBankTxnType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  BANK_CHARGE
+  INTEREST_INCOME
+  CASH_ADJUSTMENT
+}
+
+/// A cash/bank movement not already captured by a Receipt, Expense or
+/// SupplierPayment: deposits, withdrawals, inter-account transfers, bank
+/// charges, interest income, and a physical cash-count correction.
+/// `debitAccountId`/`creditAccountId` are the actual posting sides — this
+/// model reads the same way a JournalLine does rather than inventing
+/// "from"/"to" vocabulary the rest of the system doesn't use; `type` is a
+/// reporting label, not a branch in the posting logic.
+model CashBankTransaction {
+  id      String          @id @default(cuid())
+  type    CashBankTxnType
+  txnDate DateTime
+
+  debitAccountId  String
+  debitAccount    LedgerAccount @relation("CashBankTxnDebit", fields: [debitAccountId], references: [id])
+  creditAccountId String
+  creditAccount   LedgerAccount @relation("CashBankTxnCredit", fields: [creditAccountId], references: [id])
+
+  amount    Decimal @db.Decimal(14, 2)
+  reference String?
+  notes     String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("CashBankTxnCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([txnDate])
+  @@index([type])
+}
+
+enum LoanStatus {
+  ACTIVE
+  /// Principal fully repaid — the backing ledger account reads exactly zero.
+  CLOSED
+  /// Recorded in error; the disbursement entry has been reversed.
+  CANCELLED
+}
+
+/// One borrowing. `outstandingPrincipal` is deliberately NOT a column — it is
+/// derived (principal minus the sum of POSTED repayments' principal portion)
+/// and must equal the ledger balance of `loanAccount`, the same rule every
+/// other balance in this system follows. The amortisation schedule itself is
+/// derived at read time from these terms (see loan-schedule.ts) rather than
+/// stored, so it can never drift from them.
+model Loan {
+  id         String @id @default(cuid())
+  lenderName String
+  /// The lender's own reference/account number, for reconciling against
+  /// their statement. Free text — it is their identifier, not ours.
+  lenderReference String?
+
+  /// This loan's own liability account, a child of the Loans group — see the
+  /// plan's note on why loans (few, named, accountant-created, reconciled
+  /// against an external statement) sit at the opposite end of the
+  /// sub-ledger-vs-account axis from fixed assets.
+  loanAccountId String        @unique
+  loanAccount   LedgerAccount @relation("LoanAccount", fields: [loanAccountId], references: [id])
+
+  /// Where the drawdown landed, and the default source for instalments.
+  disbursedToAccountId String
+  disbursedToAccount   LedgerAccount @relation("LoanDisbursement", fields: [disbursedToAccountId], references: [id])
+
+  principal         Decimal @db.Decimal(14, 2)
+  /// Annual nominal rate, percent. 3dp: a real bank rate like 10.499% needs
+  /// more precision than TaxRate.ratePercent's (5,2).
+  annualRatePercent Decimal @db.Decimal(6, 3)
+  tenureMonths      Int
+  startDate         DateTime
+
+  /// The instalment the LENDER quoted. Entered, not computed — the schedule
+  /// is amortised from this number so it reproduces the lender's own
+  /// schedule rather than disagreeing with it by a rounding convention.
+  emiAmount Decimal @db.Decimal(14, 2)
+
+  status LoanStatus @default(ACTIVE)
+
+  disbursementEntryId String?   @unique
+  closedAt             DateTime?
+  cancelledAt          DateTime?
+  notes                String?
+
+  createdById String
+  createdBy   User     @relation("LoanCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  repayments LoanRepayment[]
+
+  @@index([status])
+}
+
+/// One recorded EMI (or prepayment) against a loan. The schedule this pays
+/// against is derived, not stored, so `installmentNumber` is the join key
+/// back to it rather than a foreign key to a schedule row.
+model LoanRepayment {
+  id                String   @id @default(cuid())
+  loanId            String
+  loan              Loan     @relation(fields: [loanId], references: [id])
+  installmentNumber Int
+  paidDate          DateTime
+
+  totalPaid        Decimal @db.Decimal(14, 2)
+  principalPortion Decimal @db.Decimal(14, 2)
+  interestPortion  Decimal @db.Decimal(14, 2)
+
+  paidFromAccountId String
+  paidFromAccount   LedgerAccount @relation("LoanRepaymentSource", fields: [paidFromAccountId], references: [id])
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("LoanRepaymentCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  /// A cancelled repayment must leave the instalment payable again. This is
+  /// deliberately NOT a `@@unique([loanId, installmentNumber])` — rows are
+  /// never deleted (only `cancelledAt` stamped), so a hard DB unique would
+  /// mean a cancelled repayment permanently bricks that instalment number,
+  /// since the cancelled row still occupies the constraint. Postgres partial
+  /// unique indexes (only where `cancelledAt IS NULL`) aren't expressible in
+  /// schema.prisma, so "at most one ACTIVE repayment per instalment" is
+  /// enforced in `loans.ts` instead, inside the same transaction as the insert.
+  @@index([loanId, installmentNumber])
+  @@index([loanId])
+}
+
+enum FixedAssetStatus {
+  ACTIVE
+  /// Sold, scrapped or written off. Excluded from every later depreciation run.
+  DISPOSED
+  /// Recorded in error; its acquisition entry has been reversed.
+  CANCELLED
+}
+
+/// One asset in the fixed-asset register — a SUB-LEDGER: cost sits in the
+/// shared category account (1210/1220/1230) and accumulated depreciation in
+/// 1290, so the chart of accounts does not grow by one row per chair.
+/// Per-asset carrying amount is derived (cost minus Σ POSTED
+/// DepreciationEntry.amount for this asset), never stored.
+model FixedAsset {
+  id   String @id @default(cuid())
+  name String
+
+  assetAccountId String
+  assetAccount   LedgerAccount @relation("FixedAssetAccount", fields: [assetAccountId], references: [id])
+
+  purchaseDate            DateTime
+  /// Capitalised cost: purchase price plus freight/installation if included.
+  /// GST claimed as ITC is never part of this.
+  cost                    Decimal  @db.Decimal(14, 2)
+  /// Annual WDV rate, percent, 3dp.
+  depreciationRatePercent Decimal  @db.Decimal(6, 3)
+  /// Depreciation never takes the asset below this.
+  salvageValue            Decimal  @default(0) @db.Decimal(14, 2)
+
+  /// Exactly one of these two is set — cash/bank purchase, or capitalised out
+  /// of an already-posted PurchaseInvoice. See the plan's note on why the
+  /// on-credit path reclassifies off PURCHASES rather than crediting AP
+  /// directly (accountsPayableAgeing() reconstructs AP from PurchaseInvoice
+  /// rows only, so a credit with no invoice behind it would never appear in
+  /// AP ageing or the supplier's statement).
+  paidFromAccountId       String?
+  paidFromAccount         LedgerAccount?   @relation("FixedAssetPaymentSource", fields: [paidFromAccountId], references: [id])
+  sourcePurchaseInvoiceId String?          @unique
+  sourcePurchaseInvoice   PurchaseInvoice? @relation(fields: [sourcePurchaseInvoiceId], references: [id])
+
+  status        FixedAssetStatus @default(ACTIVE)
+  postedEntryId String?          @unique
+
+  disposalDate     DateTime?
+  disposalProceeds Decimal?  @db.Decimal(14, 2)
+  disposalEntryId  String?   @unique
+  disposalNotes    String?
+  cancelledAt      DateTime?
+
+  createdById String
+  createdBy   User     @relation("FixedAssetCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  depreciationEntries DepreciationEntry[]
+
+  @@index([status])
+  @@index([assetAccountId])
+}
+
+/// One financial year's WDV depreciation charge for one asset. "A year can
+/// only be depreciated once" is enforced in `fixed-assets.ts`'s
+/// `postDepreciation()`, in the same transaction as the insert — NOT a
+/// `@@unique([fixedAssetId, financialYear])`. Rows are never deleted (only
+/// `cancelledAt` stamped), so a hard DB unique would mean a cancelled entry
+/// permanently blocks re-depreciating that year, the exact same trap
+/// `LoanRepayment`'s own comment documents and this schema hit for real in
+/// testing before the fix.
+model DepreciationEntry {
+  id            String @id @default(cuid())
+  fixedAssetId  String
+  fixedAsset    FixedAsset @relation(fields: [fixedAssetId], references: [id])
+  financialYear Int
+
+  openingWdv Decimal @db.Decimal(14, 2)
+  amount     Decimal @db.Decimal(14, 2)
+  closingWdv Decimal @db.Decimal(14, 2)
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("DepreciationEntryCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([fixedAssetId, financialYear])
+  @@index([fixedAssetId])
 }

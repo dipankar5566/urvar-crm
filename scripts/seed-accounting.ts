@@ -81,7 +81,7 @@ async function main() {
     // Pass 1: upsert every account without its parent link, so ordering in
     // CHART_OF_ACCOUNTS does not have to be topological.
     for (const acc of CHART_OF_ACCOUNTS) {
-      const data = {
+      const createData = {
         name: acc.name,
         type: acc.type,
         normalBalance: acc.normalBalance ?? defaultNormalBalance(acc.type),
@@ -92,13 +92,36 @@ async function main() {
       if (idByCode.has(acc.code)) {
         updated++;
         if (APPLY) {
-          await prisma.ledgerAccount.update({ where: { code: acc.code }, data });
+          const existing = await prisma.ledgerAccount.findUniqueOrThrow({
+            where: { code: acc.code },
+            select: { name: true, description: true },
+          });
+          // Deliberately does NOT include name/description here. Those may
+          // be edited by an accountant through the Chart of Accounts UI
+          // (Phase 9) — chart-of-accounts.ts's own comment promises this —
+          // and this loop used to overwrite that edit unconditionally on
+          // every re-run, silently reverting it. Only type/normalBalance/
+          // isPostable/isSystem converge to the seed's definition; a name
+          // divergence is reported, the same way the mapping loop below
+          // already reports a repointed mapping instead of overwriting it.
+          await prisma.ledgerAccount.update({
+            where: { code: acc.code },
+            data: {
+              type: createData.type,
+              normalBalance: createData.normalBalance,
+              isPostable: createData.isPostable,
+              isSystem: createData.isSystem,
+            },
+          });
+          if (existing.name !== acc.name) {
+            log(`  ! ${acc.code} is named "${existing.name}", not the seed default "${acc.name}" — left as-is`);
+          }
         }
       } else {
         created++;
         if (APPLY) {
           const row = await prisma.ledgerAccount.create({
-            data: { code: acc.code, ...data },
+            data: { code: acc.code, ...createData },
           });
           idByCode.set(acc.code, row.id);
         } else {

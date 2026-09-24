@@ -43,6 +43,15 @@ const ENTITY_TYPES = [
   // "add it when the logAudit() call site lands" gap as every entry above.
   "CreditNote",
   "StockValuation",
+  // Phase 9: cash/bank movements, loan register, fixed asset register and
+  // the manual chart-of-accounts management actions all log through the
+  // same document->posting pattern as everything above.
+  "LedgerAccount",
+  "CashBankTransaction",
+  "Loan",
+  "LoanRepayment",
+  "FixedAsset",
+  "DepreciationEntry",
 ];
 const ACTIONS = [
   "CREATE",
@@ -71,6 +80,8 @@ const ACTIONS = [
   // call — same "the row existed and was unfilterable" gap the last two
   // phases each caught once, fixed proactively here instead.
   "VIEW",
+  // Phase 9: FixedAsset disposal is its own action, distinct from CANCEL.
+  "DISPOSE",
 ];
 
 export default async function AuditLogsPage({

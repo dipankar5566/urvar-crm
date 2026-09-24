@@ -565,8 +565,21 @@ export type CashFlowSummaryResult = {
  * posture the GST registers page already states explicitly.
  */
 export async function cashFlowSummary(fromDate: Date, toDate: Date, db: Db = prisma): Promise<CashFlowSummaryResult> {
-  const map = await loadAccountMap(db);
-  const ids = [map.get("CASH_ON_HAND"), map.get("BANK_DEFAULT")].filter((id): id is string => !!id);
+  // Every postable account under Cash on Hand (1110, a leaf) and Bank
+  // Accounts (1120, a group) — not just the two accounts AccountMapping
+  // happens to name as defaults. This used to resolve only CASH_ON_HAND and
+  // BANK_DEFAULT via the mapping, silently excluding every other bank
+  // account (e.g. 1122 Bank - Flipkart Settlement) from cash flow entirely.
+  // Same code-based lookup accountGroupBalances()/cashOnHandBalance() above
+  // already use, rather than a mapping key.
+  const [cashAccount, bankGroup] = await Promise.all([
+    db.ledgerAccount.findUnique({ where: { code: "1110" }, select: { id: true } }),
+    db.ledgerAccount.findUnique({ where: { code: "1120" }, select: { id: true } }),
+  ]);
+  const bankChildren = bankGroup
+    ? await db.ledgerAccount.findMany({ where: { parentId: bankGroup.id, isPostable: true }, select: { id: true } })
+    : [];
+  const ids = [cashAccount?.id, ...bankChildren.map((c) => c.id)].filter((id): id is string => !!id);
   if (ids.length === 0) return { buckets: [], totalInflow: money(0), totalOutflow: money(0), netChange: money(0) };
 
   const lines = await db.journalLine.findMany({
@@ -1058,10 +1071,18 @@ export async function accountGroupBalances(parentCode: string, asOfDate: Date, d
   });
   const byId = new Map(grouped.map((g) => [g.accountId, g._sum]));
 
+  // Sign by the PARENT's own normal balance, not each child's — a contra
+  // account (e.g. 1290 Accumulated Depreciation, normalBalance CREDIT, but
+  // living inside the debit-normal Fixed Assets group) must still net DOWN
+  // the group total rather than add to it. balanceSheet()'s group() applies
+  // the same rule at the type level; this was signing per-child instead,
+  // which would have made this report double-count accumulated depreciation
+  // as soon as anything posted to it — caught before Phase 9 became the
+  // first thing that ever did.
+  const groupSign = parent.normalBalance === "DEBIT" ? 1 : -1;
   const accounts: AccountGroupBalance[] = children.map((c) => {
     const sums = byId.get(c.id);
-    const sign = c.normalBalance === "DEBIT" ? 1 : -1;
-    const balance = money(sub(sums?.debit ?? 0, sums?.credit ?? 0)).times(sign);
+    const balance = money(sub(sums?.debit ?? 0, sums?.credit ?? 0)).times(groupSign);
     return { accountId: c.id, code: c.code, name: c.name, balance };
   });
   return { groupName: parent.name, accounts, total: sum(accounts.map((a) => a.balance)) };

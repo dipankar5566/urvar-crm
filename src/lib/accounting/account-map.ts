@@ -52,6 +52,11 @@ export const ACCOUNT_KEYS = [
   // Adjustments
   "ROUND_OFF",
   "OPENING_BALANCE_EQUITY",
+
+  // Phase 9 — Cash, Bank, Loans & Fixed Assets
+  "INTEREST_EXPENSE",
+  "ASSET_DISPOSAL_GAIN_LOSS",
+  "CASH_SHORT_OVER",
 ] as const;
 
 export type AccountKey = (typeof ACCOUNT_KEYS)[number];

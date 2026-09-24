@@ -573,6 +573,163 @@ setting `discountPercent` directly in the test rather than through the
 12 new tests in `tests/report-extras.test.ts`, plus 10 new in
 `tests/expenses.test.ts` for Part B. **221 total.**
 
+## Phase 9 — cash, bank, loans and fixed assets: the write side (done, 2026-09-24)
+
+Phase 8 shipped a read-only report for Cash on Hand, Bank Accounts, Fixed
+Assets and Loan Accounts. The user's follow-up was the obvious one: how do
+you actually *change* those balances? Before this phase the honest answer was
+"you can't" — `1122`, `1210`-`1230`, `1290` and `2210` had never been written
+to by anything except the Vyapar opening-balance migration, and the only
+cash/bank-touching UI (Receipt, Expense, Supplier Payment) had a hardcoded
+picker limited to `1110`/`1121`.
+
+Four user decisions shaped this phase: record all three (cash/bank
+movements, loan accounts, fixed assets); build **both** guided plain-language
+forms and a raw manual journal-entry escape hatch; build **full registers
+with schedules**, not just ledger postings; depreciation method is **WDV
+(written-down/reducing-balance)**.
+
+### Architecture: sub-ledger vs. account-per-item, decided per entity
+
+Loans and fixed assets sit at opposite ends of the same axis. A loan gets its
+**own `LedgerAccount`**, created under a new `2220 Loan Accounts` group (never
+`2210` — that account already carries 3 real postings, ₹1,79,958, from the
+Vyapar migration, so it was left untouched rather than converted into a
+group) — few, named, lender-specific, reconciled against an external
+statement, the same way a bank account is. A fixed asset is a **sub-ledger
+row** against the shared category accounts (`1210`/`1220`/`1230`) and the
+existing contra account `1290 Accumulated Depreciation`, following the
+codebase's own AR/AP precedent (`1130`/`2110` are single control accounts;
+per-customer/supplier detail lives in `JournalLine.partyType`/`partyId`) —
+one `LedgerAccount` per asset would make the chart of accounts unreadable
+within a year. `PartyType` is `CUSTOMER|SUPPLIER` only, so traceability for
+both loans and assets comes from `JournalEntry.sourceType`+`sourceId`
+pointing at the register row instead — six additive enum values on
+`JournalSourceType` (`CASH_BANK_TRANSFER`, `LOAN`, `LOAN_REPAYMENT`,
+`FIXED_ASSET`, `DEPRECIATION`, `ASSET_DISPOSAL`).
+
+Every write follows the existing document→posting pattern exactly: create
+the business record, then a separate posting step emits the balanced entry
+and stores `postedEntryId`; cancellation calls `reverseJournalEntry()` and
+stamps `cancelledAt`. Nothing outside `posting.ts` writes `JournalLine`.
+
+### New models
+
+`CashBankTransaction` (deposit/withdrawal/transfer/bank charge/interest
+income/cash-count adjustment — `src/lib/accounting/cash-bank.ts`), `Loan` +
+`LoanRepayment` (`src/lib/accounting/loans.ts`, schedule math in
+`loan-schedule.ts`), `FixedAsset` + `DepreciationEntry`
+(`src/lib/accounting/fixed-assets.ts`, WDV math in `depreciation.ts`). New
+accounts: `5700`/`5710` Finance Costs/Interest Expense, `4920` Gain/(Loss) on
+Asset Disposal, `5800` Cash Short/(Over), `2220` Loan Accounts — three new
+`AccountKey`s (`INTEREST_EXPENSE`, `ASSET_DISPOSAL_GAIN_LOSS`,
+`CASH_SHORT_OVER`).
+
+**`emiAmount` is entered, not computed.** The lender's sanction letter states
+it; `loan-schedule.ts`'s `suggestEmi()` (closed-form, `Prisma.Decimal.pow()`
+directly since `(1+r)^n` is a ratio, never routed through `money.ts`'s
+paise-scale `round()`) is offered only as a form default, never stored or
+used to generate the amortisation. Only the per-instalment split is derived
+(`interest = round(outstanding × rate/12/100)`, `principal = emi − interest`)
+— the one piece of math that has to be exactly right — and the **final
+instalment is the residual**, not the formula EMI, which is what guarantees
+the loan account lands on exactly `0.00` regardless of accumulated rounding.
+WDV depreciation mirrors this: `charge = openingWdv × rate%`, floored at
+`salvageValue`, with the final year's charge taking the whole remainder
+rather than leaving a sub-rupee tail forever. Neither schedule is stored —
+both are derived at read/post time from the loan's or asset's own terms, so
+neither can drift from them.
+
+**On-credit asset purchase — a corrected design, not `Cr AP_TRADE`.** Posting
+`Dr Asset / Cr AP_TRADE` directly from the register would create a payable
+with no `PurchaseInvoice` behind it, and `accountsPayableAgeing()`
+reconstructs AP entirely from `PurchaseInvoice` rows — that credit would sit
+in the trial balance forever and never appear in AP ageing or the supplier's
+statement, the same class of silent divergence Phases 6 and 7 each already
+caught once. Instead `FixedAsset.sourcePurchaseInvoiceId` (`@@unique` — one
+invoice backs at most one asset) links to an already-`POSTED`/
+`PARTIALLY_PAID`/`PAID` invoice, and the asset's own posting is a pure
+**reclassification**: `Dr Asset (12xx) / Cr PURCHASES (5200)`, no new AP or
+GST line, since the invoice already tracked both. Capitalised cost may not
+exceed the invoice's subtotal, and `paidFromAccountId`/
+`sourcePurchaseInvoiceId` are mutually exclusive.
+
+### Two bugs caught by test-writing discipline before shipping
+
+Both were the identical bug class, in two different models:
+`LoanRepayment.@@unique([loanId, installmentNumber])` and
+`DepreciationEntry.@@unique([fixedAssetId, financialYear])` each contradicted
+their own schema comment's stated intent. Rows are never deleted (only
+`cancelledAt`-stamped), so a hard DB unique on a "which instalment/year is
+this" key means a **cancelled** row still occupies the constraint —
+re-posting the same instalment number or financial year after a legitimate
+cancellation would throw `Unique constraint failed` forever. The first was
+caught by design review before running anything; the second was caught by an
+actual failing test. Both fixed identically: `@@unique` → `@@index`, with
+"at most one ACTIVE row for this key" enforced in application code
+(`findFirst({ ..., cancelledAt: null })`) inside the same transaction as the
+insert — two follow-up migrations,
+`20260924223537_loan_repayment_no_hard_unique` and
+`20260924225448_depreciation_entry_no_hard_unique`, both index-only.
+
+A third bug, same session: `disposeFixedAsset()` called native
+`Decimal.isPositive()`/`isNegative()` directly instead of `money.ts`'s
+wrapped versions. Native `isPositive()` returns `true` for zero (it means
+"not negative," not "greater than zero"), so a disposal at exactly carrying
+amount pushed an extra zero-value posting line, which `postJournalEntry`
+correctly refused. Fixed by using `money.ts`'s `isPositive`/`isNegative`
+(which wrap `greaterThan(0)`/`lessThan(0)` specifically), the same trap
+`money.ts`'s own module comment already warns about.
+
+### Two Phase 8 bugs fixed ahead of this build
+
+Found and fixed in `financial-reports.ts` before any Phase 9 schema work,
+with regression tests in `report-extras.test.ts`: `accountGroupBalances()`
+signed each child account by its own `normalBalance` instead of the parent
+group's, so a contra account (`1290`) *added* to its group instead of netting
+it down; `cashFlowSummary()` only ever resolved the two `AccountMapping`
+defaults (`CASH_ON_HAND`/`BANK_DEFAULT`), silently excluding every other bank
+account (e.g. `1122` Bank – Flipkart Settlement).
+
+### UI
+
+Three new sections under `/accounting`, all gated on the `accounting` module
+(invisible to the three sales roles, same as the rest of this area) and
+added to the sidebar (`nav.ts`) and the audit-log entity/action filters
+(`LedgerAccount`, `CashBankTransaction`, `Loan`, `LoanRepayment`,
+`FixedAsset`, `DepreciationEntry`; action `DISPOSE`) in this same phase, not
+deferred like earlier phases' filter gaps:
+
+- **Cash & Bank** (`accounting/cash-bank`) — balances (reusing Phase 8's
+  `cashOnHandBalance`/`accountGroupBalances`), a guided form for each of the
+  six movement types, cancel-with-reason per row.
+- **Loans** (`accounting/loans`) — register list with live outstanding
+  balance; a detail page recording instalments (principal/interest split
+  computed server-side, never trusted from the client) with a running
+  repayment history, cancel-with-reason per instalment, and a whole-loan
+  cancel (refused once any repayment exists, mirroring "corrections are
+  reversals, applied in order").
+- **Fixed Assets** (`accounting/fixed-assets`) — register list with cost /
+  accumulated depreciation / net book value; a detail page posting one
+  financial year's WDV charge at a time, disposing (gain/loss computed and
+  posted automatically), and cancelling (refused once depreciation exists).
+
+Also added: a manual journal entry escape hatch (`accounting/journal/new`) —
+date, narration, N debit/credit lines with a live balance check, party
+attribution for `AR_TRADE`/`AP_TRADE` lines, idempotent via a client-minted
+UUID token — and a **Reverse** button on the journal list, the first UI path
+ever to call `reverseJournalEntry()` (previously only reachable from library
+document-cancel flows). It refuses to reverse anything except `MANUAL`/
+`OPENING_BALANCE` entries, pointing elsewhere for every other source type so
+a document's own status can't desync from its ledger effect. Chart-of-accounts
+management (`account-actions.ts` — create/rename/activate, no delete,
+`code` immutable once posted against) also shipped as an action layer this
+phase, called internally by `createLoan()` to create each loan's own account.
+
+267 tests passing (up from 221 at the end of Phase 8) — `tests/cash-bank`
+coverage lives inside `ledger-accounts.test.ts`/`loans.test.ts`/
+`fixed-assets.test.ts`/`depreciation.test.ts`/`loan-schedule.test.ts`.
+
 ## Vyapar migration
 
 Runs alongside Phase 2. Masters and balances migrate; history does not.
@@ -609,7 +766,13 @@ and rate per product; whether e-invoicing (IRN) and e-way bills apply at
 Urvar's turnover; whether freight and packing are part of taxable value or a
 separate supply; reverse-charge applicability by supplier category; which
 expense categories are blocked credits under Sec 17(5) so `claimInputCredit`
-is ticked correctly rather than left to a submitter's guess (Phase 8).
+is ticked correctly rather than left to a submitter's guess (Phase 8);
+whether the Income Tax Act's half-rate-in-year-of-acquisition rule (asset
+used under 180 days) and block-of-assets computation should apply instead of
+Phase 9's per-asset, full-rate WDV — this system explicitly makes no tax
+depreciation claim either way; depreciation rate per asset class; whether
+loan interest should accrue monthly or only be recognised on payment (Phase 9
+recognises it on payment, inside the EMI split).
 
 No claim of legal GST compliance is made in code, docs or UI until these are
 answered.

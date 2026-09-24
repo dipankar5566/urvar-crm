@@ -1,13 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { createInvoiceFromOrder } from "@/lib/accounting/invoicing";
 import { postPurchaseInvoice } from "@/lib/accounting/purchase-posting";
+import { postJournalEntry } from "@/lib/accounting/posting";
 import {
   partyStatement, billWiseProfit, allPartiesSummary, itemWiseDiscount, discountReport,
-  accountGroupBalances, cashOnHandBalance, dayBook, hsnSummary,
+  accountGroupBalances, cashOnHandBalance, cashFlowSummary, dayBook, hsnSummary,
 } from "@/lib/accounting/financial-reports";
 import { toAmountString } from "@/lib/accounting/money";
 import {
-  withRollback, testUserId, openPeriodDate, ensureVerifiedTaxRate,
+  withRollback, testUserId, openPeriodDate, ensureVerifiedTaxRate, accountId,
   testProduct, testCustomer, testOrderWithLine, testSupplier, testPurchaseInvoice,
 } from "./helpers/db";
 
@@ -224,6 +225,63 @@ describe("dayBook() / hsnSummary()", () => {
       expect(rows[0].hsnCode).toBe("3101");
       expect(toAmountString(rows[0].taxableValue)).toBe("1000.00");
       expect(rows[0].count).toBe(1);
+    });
+  });
+});
+
+describe("accountGroupBalances() / cashFlowSummary() — Phase 8 regressions found while designing Phase 9", () => {
+  it("nets a contra account DOWN, never adds it — a credit to Accumulated Depreciation reduces the Fixed Assets group total", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const plantMachinery = await accountId(tx, "1210"); // Fixed Assets, DEBIT-normal
+      const accumDep = await accountId(tx, "1290"); // contra-asset, CREDIT-normal, same group
+      const capital = await accountId(tx, "3100");
+
+      // Simulate an asset costing 1,00,000 with 10,000 already depreciated —
+      // no FixedAsset model needed for this, just two postings to real
+      // pre-existing accounts.
+      await postJournalEntry(
+        { entryDate: date, narration: "Test asset cost", sourceType: "MANUAL",
+          idempotencyKey: `TEST:AGB-COST:${Date.now()}`, postedById: userId,
+          lines: [{ accountId: plantMachinery, debit: "100000" }, { accountId: capital, credit: "100000" }] },
+        tx,
+      );
+      await postJournalEntry(
+        { entryDate: date, narration: "Test accumulated depreciation", sourceType: "MANUAL",
+          idempotencyKey: `TEST:AGB-DEP:${Date.now()}`, postedById: userId,
+          lines: [{ accountId: capital, debit: "10000" }, { accountId: accumDep, credit: "10000" }] },
+        tx,
+      );
+
+      const result = await accountGroupBalances("1200", date, tx);
+      expect(result).not.toBeNull();
+      // Must be 90,000 (cost minus accumulated depreciation), not 110,000
+      // (the pre-fix bug: signing by each child's own normalBalance made the
+      // CREDIT-normal contra account ADD to the DEBIT-normal group instead
+      // of subtracting).
+      expect(toAmountString(result!.total)).toBe("90000.00");
+    });
+  });
+
+  it("includes movement through every bank account, not just the mapped default", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const flipkart = await accountId(tx, "1122"); // Bank - Flipkart Settlement, NOT the mapped BANK_DEFAULT
+      const revenue = await accountId(tx, "4100");
+
+      await postJournalEntry(
+        { entryDate: date, narration: "Flipkart settlement", sourceType: "MANUAL",
+          idempotencyKey: `TEST:CFS:${Date.now()}`, postedById: userId,
+          lines: [{ accountId: flipkart, debit: "5000" }, { accountId: revenue, credit: "5000" }] },
+        tx,
+      );
+
+      const result = await cashFlowSummary(date, date, tx);
+      // Pre-fix, this was structurally zero: only CASH_ON_HAND/BANK_DEFAULT
+      // were ever resolved, so 1122 never contributed to any bucket.
+      expect(toAmountString(result.totalInflow)).toBe("5000.00");
     });
   });
 });
