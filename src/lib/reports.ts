@@ -30,7 +30,7 @@ export function parseReportFilters(params: {
   };
 }
 
-function quotationScopeWhere(scope: Scope, user: ReportUser) {
+export function quotationScopeWhere(scope: Scope, user: ReportUser) {
   if (scope === "all") return {};
   if (scope === "territory") {
     return {

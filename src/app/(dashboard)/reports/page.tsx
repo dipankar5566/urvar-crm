@@ -24,7 +24,7 @@ import {
   inr,
 } from "@/lib/constants/labels";
 import { ReportFiltersBar } from "./report-filters";
-import { SimpleBarChart } from "./charts";
+import { SimpleBarChart } from "@/components/charts/simple-bar-chart";
 
 export default async function ReportsPage({
   searchParams,

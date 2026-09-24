@@ -1,340 +1,65 @@
-import Link from "next/link";
-import { endOfDay, startOfDay } from "date-fns";
-import { AlertTriangle } from "lucide-react";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
-import { can, scopeWhere } from "@/lib/permissions";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
-import { StatusBadge } from "@/components/status-badge";
-import { initialsOf, colorFor } from "@/lib/avatar";
-import {
-  LEAD_STATUS_LABELS,
-  PRODUCT_CATEGORY_LABELS,
-  inr,
-} from "@/lib/constants/labels";
+import { parseDashboardPeriod } from "./period";
+import { PeriodSelect } from "./period-select";
+import { AlertsStrip } from "./sections/alerts-strip";
+import { TodayStrip } from "./sections/today-strip";
+import { SalesPerformance } from "./sections/sales-performance";
+import { FinanceSnapshot } from "./sections/finance-snapshot";
+import { FieldCallingActivity } from "./sections/field-calling-activity";
+import { LeadInsights } from "./sections/lead-insights";
+import { SectionSkeleton } from "./sections/ui";
 
-const STATUS_DOT: Record<string, string> = {
-  NEW: "var(--status-new-fg)",
-  CONTACTED: "var(--status-contacted-fg)",
-  INTERESTED: "var(--status-interested-fg)",
-  FOLLOW_UP: "var(--status-follow_up-fg)",
-  QUOTATION_SENT: "var(--status-quotation_sent-fg)",
-  NEGOTIATION: "var(--status-negotiation-fg)",
-  WON: "var(--status-won-fg)",
-  LOST: "var(--status-lost-fg)",
-};
-
-export default async function DashboardPage() {
+/**
+ * Role-aware dashboard. Each section is an async server component that
+ * checks the viewer's module permissions itself and renders nothing when it
+ * has nothing they may see, so this page stays a plain composition. Every
+ * section sits in its own <Suspense>: the ledger-backed finance panel can take
+ * longer than the lead counts, and shouldn't hold the rest of the page back.
+ */
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
   const user = await requireUser();
-  const now = new Date();
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
-
-  // Role-scoped lead filter (assignedToId for "own", state for "territory"),
-  // plus the soft-delete exclusion every lead read carries — folded in here
-  // because every query below spreads this, so none of them can forget it.
-  const leadScope = {
-    ...scopeWhere(can(user.role, "leads", "read"), user, "assignedToId"),
-    deletedAt: null,
-  };
-
-  const [
-    newLeadsToday,
-    callsToday,
-    followupsDueToday,
-    overdueFollowups,
-    quotationsSentToday,
-    totalLeads,
-    wonLeads,
-    lostLeads,
-    leadsByStatus,
-    leadsByState,
-    pipelineValue,
-    topProducts,
-    recentLeads,
-  ] = await Promise.all([
-    prisma.lead.count({
-      where: { ...leadScope, createdAt: { gte: todayStart, lte: todayEnd } },
-    }),
-    prisma.call.count({
-      where: { calledAt: { gte: todayStart, lte: todayEnd } },
-    }),
-    prisma.followUp.count({
-      where: {
-        status: "PENDING",
-        dueAt: { gte: todayStart, lte: todayEnd },
-      },
-    }),
-    prisma.followUp.count({
-      where: { status: "PENDING", dueAt: { lt: todayStart } },
-    }),
-    prisma.quotation.count({
-      where: { sentAt: { gte: todayStart, lte: todayEnd } },
-    }),
-    prisma.lead.count({ where: leadScope }),
-    prisma.lead.count({ where: { ...leadScope, status: "WON" } }),
-    prisma.lead.count({ where: { ...leadScope, status: "LOST" } }),
-    prisma.lead.groupBy({
-      by: ["status"],
-      where: leadScope,
-      _count: { _all: true },
-    }),
-    prisma.lead.groupBy({
-      by: ["state"],
-      where: leadScope,
-      _count: { _all: true },
-    }),
-    prisma.lead.aggregate({
-      where: { ...leadScope, status: { notIn: ["WON", "LOST"] } },
-      _sum: { estimatedValue: true },
-    }),
-    prisma.quotationItem.groupBy({
-      by: ["productId"],
-      _sum: { lineTotal: true },
-      orderBy: { _sum: { lineTotal: "desc" } },
-      take: 5,
-    }),
-    prisma.lead.findMany({
-      where: leadScope,
-      orderBy: { createdAt: "desc" },
-      take: 5,
-      select: { id: true, name: true, companyName: true, status: true },
-    }),
-  ]);
-
-  const closed = wonLeads + lostLeads;
-  const winRate = closed > 0 ? Math.round((wonLeads / closed) * 100) : 0;
-  const conversionRate =
-    totalLeads > 0 ? Math.round((wonLeads / totalLeads) * 100) : 0;
-
-  // Resolve product names for the top-products widget.
-  const productIds = topProducts.map((p) => p.productId);
-  const products = productIds.length
-    ? await prisma.product.findMany({
-        where: { id: { in: productIds } },
-        select: { id: true, name: true, category: true },
-      })
-    : [];
-  const productMap = new Map(products.map((p) => [p.id, p]));
-
-  const today = [
-    { label: "New Leads", value: newLeadsToday },
-    { label: "Calls Logged", value: callsToday },
-    { label: "Follow-ups Due", value: followupsDueToday },
-    { label: "Quotations Sent", value: quotationsSentToday },
-  ];
-
-  const metrics = [
-    { label: "Total Leads", value: String(totalLeads), hint: "in your scope" },
-    { label: "Won", value: String(wonLeads), hint: `${conversionRate}% conversion` },
-    { label: "Win Rate", value: `${winRate}%`, hint: `${closed} closed` },
-    { label: "Open Pipeline", value: inr(Number(pipelineValue._sum.estimatedValue ?? 0)), hint: "est. value" },
-  ];
+  const { period: periodParam } = await searchParams;
+  const period = parseDashboardPeriod(periodParam);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        subtitle={`Welcome back, ${user.name.split(" ")[0]}. Here's today at a glance.`}
+        subtitle={`Welcome back, ${user.name.split(" ")[0]}. Here's where things stand.`}
+        action={<PeriodSelect active={period.key} />}
       />
 
-      {overdueFollowups > 0 && (
-        <div
-          className="flex items-center gap-2.5 rounded-md px-3.5 py-2.5 text-sm"
-          style={{
-            background: "rgba(255,167,52,0.1)",
-            border: "1px solid rgba(255,167,52,0.3)",
-            color: "#D9730D",
-          }}
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>
-            <strong>
-              {overdueFollowups} overdue follow-up
-              {overdueFollowups === 1 ? "" : "s"}
-            </strong>{" "}
-            need your attention.
-          </span>
-          <Link
-            href="/follow-ups"
-            className="ml-auto shrink-0 font-medium text-brand hover:underline"
-          >
-            View →
-          </Link>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <AlertsStrip user={user} />
+      </Suspense>
 
-      <section>
-        <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
-          Today
-        </h2>
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          {today.map((c) => (
-            <Card key={c.label} className="p-0">
-              <CardContent className="px-[18px] py-4">
-                <div className="mb-2.5 text-xs font-medium text-muted-foreground">
-                  {c.label}
-                </div>
-                <div className="text-3xl leading-none font-bold tracking-[-0.03em]">
-                  {c.value}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
+      <Suspense fallback={<SectionSkeleton cards={5} />}>
+        <TodayStrip user={user} />
+      </Suspense>
 
-      <section>
-        <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-tertiary-foreground">
-          Performance
-        </h2>
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          {metrics.map((c) => (
-            <Card key={c.label} className="p-0">
-              <CardContent className="px-[18px] py-4">
-                <div className="mb-2.5 text-xs font-medium text-muted-foreground">
-                  {c.label}
-                </div>
-                <div className="text-2xl leading-none font-bold tracking-[-0.025em]">
-                  {c.value}
-                </div>
-                <p className="mt-1.5 text-[11px] text-tertiary-foreground">{c.hint}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        <Suspense fallback={<SectionSkeleton panel />}>
+          <SalesPerformance user={user} period={period} />
+        </Suspense>
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <Card className="overflow-hidden p-0">
-          <CardHeader className="flex flex-row items-center justify-between border-b py-3">
-            <CardTitle className="text-sm">Recent Leads</CardTitle>
-            <Link
-              href="/leads"
-              className="text-xs font-medium text-brand hover:underline"
-            >
-              View all
-            </Link>
-          </CardHeader>
-          <CardContent className="space-y-0 p-0">
-            {recentLeads.length === 0 && (
-              <p className="px-4 py-6 text-sm text-muted-foreground">
-                No leads yet.
-              </p>
-            )}
-            {recentLeads.map((lead) => (
-              <Link
-                key={lead.id}
-                href={`/leads/${lead.id}`}
-                className="flex items-center gap-2.5 border-b px-4 py-2.5 text-sm last:border-b-0 hover:bg-accent"
-              >
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                  style={{ background: colorFor(lead.name) }}
-                >
-                  {initialsOf(lead.name)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{lead.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {lead.companyName ?? lead.name}
-                  </div>
-                </div>
-                <StatusBadge status={lead.status} />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden p-0">
-          <CardHeader className="border-b py-3">
-            <CardTitle className="text-sm">Leads by Status</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-0 p-0">
-            {leadsByStatus.length === 0 && (
-              <p className="px-4 py-6 text-sm text-muted-foreground">
-                No leads yet.
-              </p>
-            )}
-            {leadsByStatus.map((row) => (
-              <div
-                key={row.status}
-                className="flex items-center justify-between border-b px-4 py-2.5 text-sm last:border-b-0"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: STATUS_DOT[row.status] }}
-                  />
-                  <span>{LEAD_STATUS_LABELS[row.status] ?? row.status}</span>
-                </div>
-                <span className="font-semibold">{row._count._all}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <Suspense fallback={<SectionSkeleton panel />}>
+          <FinanceSnapshot user={user} period={period} />
+        </Suspense>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Leads by State</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {leadsByState.length === 0 && (
-              <p className="text-sm text-muted-foreground">No leads yet.</p>
-            )}
-            {leadsByState.map((row) => (
-              <div
-                key={row.state}
-                className="flex items-center justify-between text-sm"
-              >
-                <span>{row.state}</span>
-                <Badge variant="secondary">{row._count._all}</Badge>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+      <Suspense fallback={<SectionSkeleton panel />}>
+        <FieldCallingActivity user={user} period={period} />
+      </Suspense>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Top Products (quoted)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {topProducts.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No quotations yet.
-              </p>
-            )}
-            {topProducts.map((row) => {
-              const p = productMap.get(row.productId);
-              return (
-                <div
-                  key={row.productId}
-                  className="flex items-center justify-between text-sm"
-                >
-                  <span className="truncate">
-                    {p?.name ?? "Unknown"}{" "}
-                    <span className="text-xs text-muted-foreground">
-                      {p ? PRODUCT_CATEGORY_LABELS[p.category] : ""}
-                    </span>
-                  </span>
-                  <span className="font-medium">
-                    {inr(Number(row._sum.lineTotal ?? 0))}
-                  </span>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      </div>
+      <Suspense fallback={<SectionSkeleton panel />}>
+        <LeadInsights user={user} period={period} />
+      </Suspense>
     </div>
   );
 }
