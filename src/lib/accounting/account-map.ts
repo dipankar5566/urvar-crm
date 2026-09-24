@@ -24,6 +24,9 @@ export const ACCOUNT_KEYS = [
   "FREIGHT_RECOVERED",
   "DISCOUNT_ALLOWED",
 
+  // Direct expenses
+  "FREIGHT_INWARD",
+
   // Output GST (collected on sales, owed to the government)
   "GST_OUTPUT_CGST",
   "GST_OUTPUT_SGST",

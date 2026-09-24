@@ -49,6 +49,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileId:
     fieldVisitScope !== "none"
       ? { relatedFieldVisit: { is: scopeWhere(fieldVisitScope, user, "userId") } }
       : null,
+    // Expense receipts/bills. Gated on the `expenses` module (never "own" or
+    // "territory" for any role today — it's "all" or "none"), the same way
+    // scanned purchase invoices are gated on `purchases` rather than a sales
+    // module.
+    can(user.role, "expenses", "read") !== "none" ? { relatedExpenseId: { not: null } } : null,
   ].filter((clause) => clause !== null);
 
   if (visible.length === 0) {

@@ -88,6 +88,24 @@ export function assertPhotoUploadAllowed(file: File): void {
   }
 }
 
+/** A receipt or bill attached to an expense: a photo OR a PDF, unlike a
+ * field-visit photo. Deliberately separate from assertUploadAllowed for the
+ * same reason assertPhotoUploadAllowed is: this never reaches Sarvam, so it
+ * has no reason to inherit that service's size ceiling. */
+export function assertExpenseAttachmentUploadAllowed(file: File): void {
+  if (file.size === 0) {
+    throw new UploadRejected("That file is empty.");
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    throw new UploadRejected(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_PHOTO_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  if (!ALLOWED_MIME.has(file.type)) {
+    throw new UploadRejected("Upload a PDF, JPG or PNG.");
+  }
+}
+
 /**
  * Writes an uploaded document to disk under a server-generated id.
  *

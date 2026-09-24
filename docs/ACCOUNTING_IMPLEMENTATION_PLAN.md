@@ -422,6 +422,157 @@ Phases 2, 3 and 6. Fixed alongside this pass.
 
 10 new tests (7 credit-notes + 3 ageing), **192 total**.
 
+## Phase 8 — Vyapar report-parity and itemised expenses (done, 2026-09-24)
+
+Two reference screens from the user, not a pre-planned phase: a screenshot
+of Vyapar's Accounts → Reports menu tree, and a screenshot of Vyapar's
+Expense entry screen. The ask was to check this system's own coverage
+against both and close real gaps.
+
+### Part B — itemised expense entry (built first; Part A's Expense Item
+Report depends on it)
+
+`Expense` was a flat single amount with one category, posting two journal
+lines. The reference screen needs line items, a GST toggle, transportation,
+round-off and an attachment. Additive migration
+`20260924133732_expense_line_items`: new `ExpenseItem` model (mirrors
+`SalesInvoiceItem`'s shape) and new `Expense` columns
+(`isGstApplicable`, `claimInputCredit`, `subtotal`,
+`cgstAmount`/`sgstAmount`/`igstAmount`, `transportAmount`, `roundOff`), plus
+`File.relatedExpenseId` for the attachment — following `File`'s existing
+`relatedXId`-per-entity-type convention, not a `fileId` on `Expense`. One new
+`AccountKey`, `FREIGHT_INWARD` → `5310` (the account already existed in the
+seed; only the mapping key was missing).
+
+**This is the first code path in the system that ever posts to
+`GST_INPUT_*`.** Purchases post straight to the P&L Purchases account with
+no tax split (a pre-existing gap, noted below), so `gstTaxSummary()`'s
+input-credit column was structurally zero before this. It no longer is.
+
+Two decisions, put to the user rather than assumed:
+- **Per-line tax % is picked directly** (a 0/5/12/18/28 dropdown), not
+  resolved through `resolveTaxRate()`'s verified-HSN gate. On a sale, the
+  rate is a classification decision the company is liable for; on an
+  expense, it is a transcription of what the supplier's own bill already
+  shows, and most expense lines (rent, courier, electricity) carry no HSN at
+  all.
+- **Input Tax Credit is opt-in, `claimInputCredit` default false.** Unclaimed
+  tax folds into the category account as part of the cost — the correct
+  treatment for a blocked credit (Sec 17(5): staff welfare, motor vehicles,
+  etc.) — rather than every GST expense silently claiming credit by default.
+
+**A real balance bug, caught by the test suite before it shipped:** the
+CGST/SGST split was originally computed only `if (claimInputCredit && tax >
+0)`. With the flag off, `cgstAmount`/`sgstAmount` stayed zero while `amount`
+(used for the payment credit) still included the tax — the category debit
+and payment credit silently disagreed and `postJournalEntry` threw. Fixed:
+the split is now always computed once there is tax; `claimInputCredit` only
+decides *where* it posts, never whether it is recorded. Documented in
+`expenses.ts` so it isn't reintroduced.
+
+Tax split for a claimed credit is always intra-state (CGST+SGST) — expense
+entry captures no supplier state/place-of-supply the way sales invoicing
+does, and the overwhelming majority of operating expenses are bought
+locally. **A genuinely inter-state expense claiming ITC is a known gap**,
+tracked here rather than silently mis-posted as IGST.
+
+Round-off posts to `ROUND_OFF`, mirror-image of `invoicing.ts`'s direction:
+there AR is *debited* the rounded total, so rounding up *credits*
+`ROUND_OFF`; here the payment account is *credited* the rounded total, so
+rounding up *debits* it instead. Covered by tests in both directions — the
+single easiest thing to get backwards in this change.
+
+`createExpense()`/`approveExpense()` in `expenses.ts`; UI is
+`expenses/new/new-expense-form.tsx` (line-item table, GST toggle, ITC
+checkbox, transportation, live totals preview — all recomputed
+authoritatively server-side, never trusted from the client) plus a new
+`uploadExpenseAttachmentAction()` mirroring `purchases/actions.ts`'s
+upload-then-link pattern, and the `api/documents/[fileId]` route gained an
+`expenses`-gated authorization branch for the new attachment. The legacy
+flat-amount path (no items, `amount` entered directly) is untouched and
+still posts exactly as before — 21 tests in `tests/expenses.test.ts` (11
+pre-existing + 10 new), including one exercising the legacy path unchanged.
+This also closes the "Expense receipt/bill attachment" item Phase 7 left
+deferred.
+
+### Part A — report gaps
+
+~20 new read-only functions in `financial-reports.ts`, same rules as
+everything already there (derived from posted `JournalLine`/document rows,
+never an independent recomputation), plus 17 new pages under
+`accounting/reports/`, and the hub page (`accounting/reports/page.tsx`)
+reorganized from a flat 7-card grid into sections mirroring Vyapar's own
+categories now that the count is ~24.
+
+**A planning correction, caught by reading the schema instead of assuming:**
+the original plan sketch for Party Statement assumed `JournalEntry` had no
+party reference and would need reconstructing from documents directly, the
+way `accountsReceivableAgeing` does. `JournalLine.partyType`/`partyId` in
+fact exists, is indexed, and is already populated by every AR/AP posting
+path (`invoicing.ts`, `credit-notes.ts`, `receipts.ts`,
+`supplier-payments.ts`, `purchase-posting.ts`, `opening-balances.ts`).
+`partyStatement()` is therefore a true ledger sub-account statement — the
+same shape as `generalLedger()`, scoped to a party instead of an account —
+not a document-level reconstruction. A customer statement is debit-normal
+(what they owe grows with debits, mirroring AR_TRADE); a supplier statement
+is credit-normal (mirroring AP_TRADE). Tested both directions plus the
+opening-balance boundary.
+
+**Built:** `dayBook` (all accounts, chronological — Day Book/All
+Transactions), `cashFlowSummary` (cash+bank movement bucketed by cause,
+explicitly not a formal operating/investing/financing statement),
+`salesAgeingByInvoice` (bill-wise, unlike AR Ageing's per-customer net),
+`billWiseProfit` (per-invoice estimated margin, flags a null cost line
+rather than treating it as zero — tested), `partyStatement`,
+`partyWiseProfitAndLoss`, `allPartiesSummary`, `partyReportByItem`,
+`hsnSummary` (aggregates `gstOutwardSupplyRegister` by HSN),
+`itemWiseProfitAndLoss`, `itemCategoryWiseProfitAndLoss`, `itemWiseDiscount`
+and `discountReport` (both recompute discount from quantity × unitPrice ×
+discountPercent — the same formula `tax.ts`'s `priceLine()` uses, never a
+stored standalone figure), `expenseCategoryReport`, `expenseItemReport`
+(needs Part B's `ExpenseItem`), and `accountGroupBalances`/
+`cashOnHandBalance` (generic parent-group balance reader, backing Bank
+Report, and the combined Cash/Bank/Fixed-Assets/Loans page).
+
+**A genuine finding, not assumed:** "Loan Accounts" and "Fixed Assets" were
+expected to need new chart-of-accounts groups. Reading `chart-of-accounts.ts`
+found both already seeded — Fixed Assets (`1200`: Plant & Machinery,
+Furniture & Fixtures, Vehicles, Accumulated Depreciation) and Loans (`2210`,
+under Long-term Liabilities `2200`) — so `accountGroupBalances()` reads them
+directly with zero schema or seed changes. The user had a Tally XML export
+ready to cross-check naming/structure against, in case new groups were
+needed; since none were, it wasn't used for this piece.
+
+**Discovered while testing, not a code bug but worth recording:**
+`createInvoiceFromOrder()` hardcodes `discountPercent: 0` on every line — no
+current UI path ever sets a per-line discount on a sales invoice. `Item Wise
+Discount`/`Discount Report` are therefore correct but currently vacuous
+against real production data; the aggregation formula was verified by
+setting `discountPercent` directly in the test rather than through the
+(nonexistent) write path.
+
+**Explicitly not built, documented rather than faked:**
+- **Stock Summary / Stock Detail / Item Detail / Low Stock Summary** — restated
+  from Phase 4: on-hand quantity lives in `urvar_erp`, reachable only via a
+  `postgres_fdw` link that was drafted (`phase2-crm-fdw.sql`) but never
+  installed. A real infra dependency, not a report gap.
+- **SAC Report** — not applicable; Urvar sells physical goods (HSN), not
+  services.
+- **GSTR-2** — blocked on data capture, not a report to write:
+  `PurchaseInvoiceItem` has no `hsnCode` and no line-level tax split at all
+  (just qty/unitPrice/lineTotal), and `PurchaseInvoice` captures no supplier
+  GSTIN. An inward-supply/ITC register needs that captured at intake first.
+- **GSTR-9** — an annual return aggregating a full FY of filed GSTR-1/3B
+  under accountant sign-off, the same territory this doc's own "Open
+  questions → Accountant" section already reserves, not something to
+  synthesize from internal registers.
+- **Loan repayment schedules / depreciation engine** — genuinely new
+  functionality (interest schedules, depreciation methods), not a report
+  gap; `accountGroupBalances` only ever shows the balance that's there.
+
+12 new tests in `tests/report-extras.test.ts`, plus 10 new in
+`tests/expenses.test.ts` for Part B. **221 total.**
+
 ## Vyapar migration
 
 Runs alongside Phase 2. Masters and balances migrate; history does not.
@@ -456,7 +607,9 @@ acceptable; who signs the opening trial balance.
 **Accountant:** state(s) of registration and the GSTIN to print; correct HSN
 and rate per product; whether e-invoicing (IRN) and e-way bills apply at
 Urvar's turnover; whether freight and packing are part of taxable value or a
-separate supply; reverse-charge applicability by supplier category.
+separate supply; reverse-charge applicability by supplier category; which
+expense categories are blocked credits under Sec 17(5) so `claimInputCredit`
+is ticked correctly rather than left to a submitter's guess (Phase 8).
 
 No claim of legal GST compliance is made in code, docs or UI until these are
 answered.

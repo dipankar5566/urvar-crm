@@ -846,6 +846,9 @@ model File {
   // A photo taken at a field visit (shop front, crop, site).
   relatedFieldVisitId      String?
   relatedFieldVisit        FieldVisit?      @relation(fields: [relatedFieldVisitId], references: [id], onDelete: Cascade)
+  // A receipt/bill photo attached to an expense entry.
+  relatedExpenseId         String?
+  relatedExpense           Expense?         @relation(fields: [relatedExpenseId], references: [id], onDelete: Cascade)
   uploadedById             String
   uploadedBy               User             @relation(fields: [uploadedById], references: [id])
   createdAt                DateTime         @default(now())
@@ -855,6 +858,7 @@ model File {
   @@index([relatedCustomerId])
   @@index([relatedPurchaseInvoiceId])
   @@index([relatedFieldVisitId])
+  @@index([relatedExpenseId])
 }
 
 /// A rep's visit to a lead or customer in the field, captured on their phone.
@@ -1835,7 +1839,32 @@ model Expense {
 
   payeeName   String
   description String?
+  /// The grand total, whichever path produced it — a plain flat-amount
+  /// expense (no items) or an itemised one (subtotal + transport + tax ±
+  /// roundOff). Every existing reader (posting, audit, reports) keeps reading
+  /// this one field regardless of which shape is underneath.
   amount      Decimal @db.Decimal(14, 2)
+
+  /// True once this expense carries itemised GST-priced lines. A legacy
+  /// flat-amount expense (no `items`, this false) keeps working exactly as
+  /// before — the fields below all default to zero/false and are simply
+  /// unused on that path.
+  isGstApplicable Boolean @default(false)
+  /// Whether this expense's GST may be claimed as Input Tax Credit. Defaults
+  /// false on purpose: a blocked credit (Sec 17(5) — staff welfare, motor
+  /// vehicles, etc.) claimed by default would be a real over-claim, not a
+  /// rounding nicety, so a person must deliberately tick this on rather than
+  /// every GST expense silently claiming credit.
+  claimInputCredit Boolean @default(false)
+
+  subtotal   Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  /// The "Transportation" charge on the entry screen — posts to its own
+  /// Freight Inward account, never folded into the expense's category.
+  transportAmount Decimal @default(0) @db.Decimal(12, 2)
+  roundOff        Decimal @default(0) @db.Decimal(6, 2)
 
   method           PaymentMethod
   /// The cash/bank account the money left from.
@@ -1859,9 +1888,40 @@ model Expense {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  items       ExpenseItem[]
+  attachments File[]
+
   @@index([status])
   @@index([expenseDate])
   @@index([categoryAccountId])
+}
+
+/// One line of an itemised expense — description, qty, price, and this
+/// line's own tax rate. The rate is picked directly (a 0/5/12/18/28 dropdown
+/// on the entry screen), never resolved through `resolveTaxRate()`'s
+/// verified-HSN gate the sales side uses: on a sale, the rate is a
+/// classification decision this company is liable for, so an unverified HSN
+/// blocks pricing; on an expense, the rate is a transcription of whatever the
+/// supplier's own bill already shows, and most expense lines (rent, courier,
+/// electricity) carry no HSN at all.
+model ExpenseItem {
+  id        String  @id @default(cuid())
+  expenseId String
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  description String
+
+  quantity  Decimal @db.Decimal(12, 2)
+  unitPrice Decimal @db.Decimal(12, 2)
+
+  taxRatePercent Decimal @default(0) @db.Decimal(5, 2)
+  taxableValue   Decimal @db.Decimal(14, 2)
+  taxAmount      Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal      Decimal @db.Decimal(14, 2)
+
+  lineNumber Int
+
+  @@index([expenseId])
 }
 
 // ============================================================
