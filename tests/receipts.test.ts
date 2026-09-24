@@ -4,6 +4,7 @@ import { recordReceipt, cancelReceipt, outstandingOnInvoice, ReceiptError } from
 import { toAmountString, sum } from "@/lib/accounting/money";
 import {
   withRollback, testUserId, openPeriodDate, ensureVerifiedTaxRate, testProduct, testCustomer, testOrderWithLine,
+  accountId,
 } from "./helpers/db";
 
 async function setupInvoice(tx: Parameters<Parameters<typeof withRollback>[0]>[0], amount = { qty: 10, price: 100 }) {
@@ -268,6 +269,107 @@ describe("cancelReceipt()", () => {
 
       const outstanding = await outstandingOnInvoice(invoice.invoiceId, tx);
       expect(toAmountString(outstanding)).toBe(invoice.totalAmount);
+    });
+  });
+});
+
+describe("recordReceipt(): keeps Order.paymentStatus in step", () => {
+  it("is PENDING until paid, PARTIAL on a part-payment, PAID once settled, and reverts on cancel", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, order, invoice, bankId } = await setupInvoice(tx);
+      const status = async () => (await tx.order.findUniqueOrThrow({ where: { id: order.id } })).paymentStatus;
+      const pay = (amount: string) =>
+        recordReceipt({
+          customerId: customer.id,
+          receiptDate: date,
+          amount,
+          method: "BANK_TRANSFER",
+          depositAccountId: bankId,
+          allocations: [{ invoiceId: invoice.invoiceId, amount }],
+          createdById: userId,
+        }, tx);
+
+      expect(await status()).toBe("PENDING");
+
+      const first = await pay("100");
+      expect(await status()).toBe("PARTIAL");
+
+      const remaining = toAmountString(await outstandingOnInvoice(invoice.invoiceId, tx));
+      await pay(remaining);
+      expect(await status()).toBe("PAID");
+
+      await cancelReceipt({ receiptId: first.receiptId, reason: "Bounced", cancelledById: userId }, tx);
+      expect(await status()).toBe("PARTIAL");
+    });
+  });
+
+  it("stays PARTIAL when the only invoice is paid but the order is not fully invoiced", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      await ensureVerifiedTaxRate(tx, "3101", 5);
+      const customer = await testCustomer(tx);
+      const product = await testProduct(tx, { hsnCode: "3101" });
+      const order = await testOrderWithLine(tx, {
+        userId, customerId: customer.id, productId: product.id, quantity: 10, unitPrice: 100,
+      });
+      const item = await tx.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
+      // Bill only half the order.
+      const invoice = await createInvoiceFromOrder({
+        orderId: order.id, invoiceDate: date, createdById: userId,
+        lines: [{ orderItemId: item.id, quantity: 5 }],
+      }, tx);
+      const bank = await tx.ledgerAccount.findUniqueOrThrow({ where: { code: "1121" } });
+
+      await recordReceipt({
+        customerId: customer.id, receiptDate: date, amount: invoice.totalAmount, method: "CASH",
+        depositAccountId: bank.id,
+        allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }],
+        createdById: userId,
+      }, tx);
+
+      const paidInvoice = await tx.salesInvoice.findUniqueOrThrow({ where: { id: invoice.invoiceId } });
+      expect(paidInvoice.status).toBe("PAID");
+      expect((await tx.order.findUniqueOrThrow({ where: { id: order.id } })).paymentStatus).toBe("PARTIAL");
+    });
+  });
+});
+
+describe("recordReceipt(): deposit account", () => {
+  it("rejects a deposit account that is not Cash on Hand or a bank account", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice } = await setupInvoice(tx);
+      const revenue = await accountId(tx, "4100");
+      await expect(
+        recordReceipt({
+          customerId: customer.id, receiptDate: date, amount: invoice.totalAmount, method: "CASH",
+          depositAccountId: revenue,
+          allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }],
+          createdById: userId,
+        }, tx),
+      ).rejects.toBeInstanceOf(ReceiptError);
+    });
+  });
+
+  it("accepts any bank account under 1120, not just the default", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice } = await setupInvoice(tx);
+      const other = await tx.ledgerAccount.findFirst({
+        where: { parent: { code: "1120" }, isPostable: true, isActive: true, code: { not: "1121" } },
+      });
+      if (!other) return; // this chart has only the default bank account
+
+      const result = await recordReceipt({
+        customerId: customer.id, receiptDate: date, amount: invoice.totalAmount, method: "BANK_TRANSFER",
+        depositAccountId: other.id,
+        allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }],
+        createdById: userId,
+      }, tx);
+
+      const debit = await tx.journalLine.findFirstOrThrow({
+        where: { entryId: result.journalEntryId, accountId: other.id },
+      });
+      expect(toAmountString(debit.debit)).toBe(invoice.totalAmount);
     });
   });
 });

@@ -17,7 +17,15 @@ export default async function NewReceiptPage() {
       take: 500,
     }),
     prisma.ledgerAccount.findMany({
-      where: { type: "ASSET", isPostable: true, isActive: true, code: { in: ["1110", "1121"] } },
+      // Cash on Hand plus every bank account under 1120 — not a hardcoded pair,
+      // so a settlement account like 1122 can receive money too. Same set
+      // recordReceipt() enforces server-side.
+      where: {
+        type: "ASSET",
+        isPostable: true,
+        isActive: true,
+        OR: [{ code: "1110" }, { parent: { code: "1120" } }],
+      },
       select: { id: true, code: true, name: true },
       orderBy: { code: "asc" },
     }),

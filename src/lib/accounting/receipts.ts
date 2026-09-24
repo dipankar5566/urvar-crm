@@ -71,11 +71,49 @@ export async function outstandingOnInvoice(
   return sub(invoice.totalAmount, paid);
 }
 
-/** Recompute and persist an invoice's DRAFT/POSTED/PARTIALLY_PAID/PAID status. */
+/**
+ * Recompute an order's payment status from its invoices.
+ *
+ * `Order.paymentStatus` used to be set to PENDING at creation and never touched
+ * again, so a fully paid order still read "pending". It is derived here from
+ * invoice statuses rather than by comparing money, because `Order.totalAmount`
+ * is the CRM's own figure and the tax engine's invoice totals can legitimately
+ * differ from it (GST, rounding) — comparing the two would flag a fully paid
+ * order as short.
+ *
+ * PAID needs BOTH every live invoice paid AND every order line fully invoiced:
+ * an order billed in two instalments, with only the first one paid, is PARTIAL,
+ * not PAID. Cancelled and draft invoices don't count either way.
+ */
+async function refreshOrderPaymentStatus(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+  const [order, invoices] = await Promise.all([
+    tx.order.findUnique({
+      where: { id: orderId },
+      select: { paymentStatus: true, items: { select: { quantity: true, quantityInvoiced: true } } },
+    }),
+    tx.salesInvoice.findMany({
+      where: { orderId, status: { in: ["POSTED", "PARTIALLY_PAID", "PAID"] } },
+      select: { status: true },
+    }),
+  ]);
+  if (!order) return;
+
+  const anyPaid = invoices.some((i) => i.status === "PAID" || i.status === "PARTIALLY_PAID");
+  const allInvoicesPaid = invoices.length > 0 && invoices.every((i) => i.status === "PAID");
+  const fullyInvoiced =
+    order.items.length > 0 && order.items.every((i) => i.quantityInvoiced.greaterThanOrEqualTo(i.quantity));
+
+  const next = allInvoicesPaid && fullyInvoiced ? "PAID" : anyPaid ? "PARTIAL" : "PENDING";
+  if (next !== order.paymentStatus) {
+    await tx.order.update({ where: { id: orderId }, data: { paymentStatus: next } });
+  }
+}
+
+/** Recompute and persist an invoice's DRAFT/POSTED/PARTIALLY_PAID/PAID status, then its order's payment status. */
 async function refreshInvoiceStatus(tx: Prisma.TransactionClient, invoiceId: string): Promise<void> {
   const invoice = await tx.salesInvoice.findUnique({
     where: { id: invoiceId },
-    select: { totalAmount: true, status: true },
+    select: { totalAmount: true, status: true, orderId: true },
   });
   if (!invoice || invoice.status === "CANCELLED") return;
   const outstanding = await outstandingOnInvoice(invoiceId, tx);
@@ -87,6 +125,9 @@ async function refreshInvoiceStatus(tx: Prisma.TransactionClient, invoiceId: str
   if (status !== invoice.status) {
     await tx.salesInvoice.update({ where: { id: invoiceId }, data: { status } });
   }
+  // Runs even when the invoice's own status didn't change — a second invoice
+  // on the same order being paid can still move the order's status.
+  if (invoice.orderId) await refreshOrderPaymentStatus(tx, invoice.orderId);
 }
 
 /** Record a receipt, allocate it, and post the ledger entry. One transaction. */
@@ -100,6 +141,20 @@ export async function recordReceipt(
 
     const amount = round(input.amount);
     if (!gt(amount, 0)) throw new ReceiptError("Receipt amount must be greater than zero.");
+
+    // postJournalEntry only checks that an account is active and postable, not
+    // what kind it is — without this, a crafted depositAccountId could post a
+    // customer receipt as a debit to an expense or liability account. Money
+    // received is deposited to Cash on Hand (1110) or any account under Bank
+    // Accounts (1120), the same set the receipt form offers.
+    const deposit = await tx.ledgerAccount.findUnique({
+      where: { id: input.depositAccountId },
+      select: { code: true, parent: { select: { code: true } } },
+    });
+    if (!deposit) throw new ReceiptError("Deposit account not found.");
+    if (deposit.code !== "1110" && deposit.parent?.code !== "1120") {
+      throw new ReceiptError("Money received must be deposited to Cash on Hand or a bank account.");
+    }
 
     const allocationInputs = input.allocations ?? [];
     let allocatedTotal = money(0);
