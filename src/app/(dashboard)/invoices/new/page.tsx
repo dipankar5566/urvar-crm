@@ -35,9 +35,23 @@ export default async function NewInvoicePage({
     include: {
       customer: { select: { name: true, state: true, gstNumber: true } },
       items: { orderBy: { lineNumber: "asc" } },
+      quotation: { select: { quotationNumber: true, freightAmount: true, discountAmount: true } },
+      _count: { select: { salesInvoices: { where: { status: { not: "CANCELLED" } } } } },
     },
   });
   if (!order) notFound();
+
+  // Freight and an overall discount are quoted at quotation level, not per
+  // line, so they don't travel with the order lines. Pre-fill them on the
+  // FIRST invoice only (the rep can still edit), so invoicing a quote bills
+  // what was quoted — QT-2026-0004 quoted ₹500 freight and the form used to
+  // start at ₹0. Later partial invoices start at zero to avoid billing twice.
+  const isFirstInvoice = order._count.salesInvoices === 0;
+  const defaults = {
+    freightAmount: isFirstInvoice ? Number(order.quotation?.freightAmount ?? 0) : 0,
+    discountAmount: isFirstInvoice ? Number(order.quotation?.discountAmount ?? 0) : 0,
+    fromQuotation: isFirstInvoice ? (order.quotation?.quotationNumber ?? null) : null,
+  };
 
   const remaining = order.items.map((item) => ({
     id: item.id,
@@ -55,7 +69,7 @@ export default async function NewInvoicePage({
         title={`Raise Invoice — ${order.orderNumber}`}
         subtitle={`${order.customer.name} · ${order.customer.state}`}
       />
-      <NewInvoiceForm orderId={order.id} items={remaining} />
+      <NewInvoiceForm orderId={order.id} items={remaining} defaults={defaults} />
     </div>
   );
 }

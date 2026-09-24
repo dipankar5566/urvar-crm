@@ -1,9 +1,10 @@
 /**
- * Backfills OrderItem for orders created before Phase 2 existed.
+ * Backfills OrderItem for orders that were created without lines.
  *
- * updateQuotationStatus()'s ACCEPTED branch has always created an Order with
- * a single totalAmount and no lines — OrderItem did not exist until this
- * migration. Every such Order links back to the Quotation it was accepted
+ * Until orderItemsFromQuotation() (src/lib/order-from-quotation.ts), both
+ * quotation-acceptance paths created an Order with a single totalAmount and no
+ * lines — first because OrderItem did not exist yet, then because nobody wired
+ * it in (ORD-2026-0137/0138 were repaired with this script on 2026-09-25). Every such Order links back to the Quotation it was accepted
  * from, and that quotation's QuotationItem rows are the exact lines that were
  * sold; this just copies them across so the order becomes invoiceable.
  *
@@ -28,7 +29,7 @@ async function main() {
   try {
     const candidates = await prisma.order.findMany({
       where: { items: { none: {} }, quotationId: { not: null } },
-      include: { quotation: { include: { items: true } } },
+      include: { quotation: { include: { items: { include: { product: { select: { name: true } } } } } } },
     });
 
     console.log(APPLY ? "APPLYING backfill\n" : "DRY RUN — pass --apply to write\n");
@@ -46,7 +47,9 @@ async function main() {
           data: qItems.map((qi, i) => ({
             orderId: order.id,
             productId: qi.productId,
-            description: qi.description ?? `Line ${i + 1}`,
+            // Same fallback as orderItemsFromQuotation(): this text prints on
+            // the GST invoice, so prefer the product name over "Line N".
+            description: qi.description?.trim() || qi.product?.name || `Line ${i + 1}`,
             quantity: qi.quantity,
             unitPrice: qi.unitPrice,
             lineTotal: qi.lineTotal,

@@ -17,6 +17,7 @@ import { notifyUser } from "@/lib/notifications";
 import { notifyQuotationSent } from "@/lib/quotation-notify";
 import { logAudit } from "@/lib/audit";
 import { PIPELINE_STAGE_ORDER, STAGE_TO_STATUS } from "@/lib/constants/labels";
+import { orderItemsFromQuotation } from "@/lib/order-from-quotation";
 
 type ActionResult = { error: string } | { success: true; id?: string };
 
@@ -273,7 +274,11 @@ export async function updateQuotationStatus(
 
   const existing = await prisma.quotation.findFirst({
     where: { id: quotationId, ...scopeWhere(scope, user, "createdById") },
-    include: { items: true, customer: true, lead: { include: { pipeline: true } } },
+    include: {
+      items: { include: { product: { select: { name: true } } } },
+      customer: true,
+      lead: { include: { pipeline: true } },
+    },
   });
   if (!existing) return { error: "Quotation not found or access denied." };
 
@@ -307,6 +312,9 @@ export async function updateQuotationStatus(
               state: existing.customer.state,
               district: existing.customer.district,
               createdById: user.id,
+              // Without lines the order can never be invoiced — see
+              // orderItemsFromQuotation().
+              items: { create: orderItemsFromQuotation(existing.items) },
             },
           }),
         ]);

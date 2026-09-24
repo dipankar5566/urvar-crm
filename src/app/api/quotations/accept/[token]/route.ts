@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateOrderNumber } from "@/lib/id-sequences";
+import { orderItemsFromQuotation } from "@/lib/order-from-quotation";
 import { notifySystem } from "@/lib/notifications";
 import { logAudit } from "@/lib/audit";
 
@@ -132,7 +133,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ token:
   // race, or a second submit after the first already succeeded).
   const existing = await prisma.quotation.findFirst({
     where: { acceptToken: token, status: "SENT" },
-    include: { customer: true },
+    include: { customer: true, items: { include: { product: { select: { name: true } } } } },
   });
 
   if (!existing || !existing.customerId || !existing.customer) {
@@ -162,6 +163,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ token:
             // system-attributed write in this codebase (no separate
             // system-actor concept exists in the schema).
             createdById: existing.createdById,
+            // Without lines the order can never be invoiced — see
+            // orderItemsFromQuotation().
+            items: { create: orderItemsFromQuotation(existing.items) },
           },
         }),
       ]);

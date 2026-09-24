@@ -21,7 +21,15 @@ type OrderLineOption = {
   unitPrice: number;
 };
 
-export function NewInvoiceForm({ orderId, items }: { orderId: string; items: OrderLineOption[] }) {
+export function NewInvoiceForm({
+  orderId,
+  items,
+  defaults,
+}: {
+  orderId: string;
+  items: OrderLineOption[];
+  defaults: { freightAmount: number; discountAmount: number; fromQuotation: string | null };
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const invoiceable = items.filter((i) => i.remaining > 0);
@@ -34,8 +42,8 @@ export function NewInvoiceForm({ orderId, items }: { orderId: string; items: Ord
   );
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState("");
-  const [freightAmount, setFreightAmount] = useState("0");
-  const [discountAmount, setDiscountAmount] = useState("0");
+  const [freightAmount, setFreightAmount] = useState(String(defaults.freightAmount));
+  const [discountAmount, setDiscountAmount] = useState(String(defaults.discountAmount));
   const [notes, setNotes] = useState("");
 
   const estimatedSubtotal = useMemo(
@@ -46,6 +54,20 @@ export function NewInvoiceForm({ orderId, items }: { orderId: string; items: Ord
     [invoiceable, selected, quantities],
   );
 
+  // Two different reasons for nothing to invoice. An order with no lines at
+  // all used to fall through to "fully invoiced" (every() over an empty list
+  // is true), which sent people hunting for an invoice that never existed.
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">
+          This order has no line items, so there is nothing to invoice yet. Orders accepted
+          from a quotation get their lines copied automatically; an older order may need its
+          lines restored first — ask an administrator.
+        </CardContent>
+      </Card>
+    );
+  }
   if (invoiceable.length === 0) {
     return (
       <Card>
@@ -140,6 +162,12 @@ export function NewInvoiceForm({ orderId, items }: { orderId: string; items: Ord
             <Label htmlFor="discountAmount">Discount (₹)</Label>
             <Input id="discountAmount" type="number" min="0" value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} />
           </div>
+          {defaults.fromQuotation && (defaults.freightAmount > 0 || defaults.discountAmount > 0) && (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              Freight and discount pre-filled from quotation {defaults.fromQuotation}. Edit them if
+              this invoice should bill differently.
+            </p>
+          )}
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="notes">Notes</Label>
             <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
