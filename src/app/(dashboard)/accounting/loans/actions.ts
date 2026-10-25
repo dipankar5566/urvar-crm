@@ -9,6 +9,9 @@ import {
   recordLoanRepayment,
   cancelLoanRepayment,
   cancelLoan,
+  recordLoanFee,
+  recordLoanTopUp,
+  cancelLoanTransaction,
   LoanError,
 } from "@/lib/accounting/loans";
 import { suggestEmi, LoanScheduleError } from "@/lib/accounting/loan-schedule";
@@ -150,6 +153,107 @@ export async function cancelLoanAction(input: z.infer<typeof cancelLoanSchema>):
     await cancelLoan({ loanId: parsed.data.loanId, reason: parsed.data.reason, cancelledById: user.id });
     revalidatePath(`/accounting/loans/${parsed.data.loanId}`);
     revalidatePath("/accounting/loans");
+    return { success: true };
+  } catch (err) {
+    if (err instanceof LoanError) return { error: err.message };
+    throw err;
+  }
+}
+
+const feeSchema = z.object({
+  loanId: z.string().min(1),
+  type: z.enum(["PROCESSING_FEE", "CHARGES"]),
+  txnDate: z.string().min(1, "Date is required"),
+  amount: z.coerce.number().positive("Amount must be greater than zero"),
+  paymentAccountId: z.string().min(1, "Select which account this was paid from"),
+  notes: z.string().optional(),
+});
+
+export async function recordLoanFeeAction(
+  input: z.infer<typeof feeSchema>,
+): Promise<{ error: string } | { success: true; loanTransactionId: string }> {
+  const user = await requireUser();
+  assertCan(user.role, "accounting", "write");
+
+  const parsed = feeSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const data = parsed.data;
+
+  try {
+    const result = await recordLoanFee({
+      loanId: data.loanId,
+      type: data.type,
+      txnDate: new Date(data.txnDate),
+      amount: data.amount,
+      paymentAccountId: data.paymentAccountId,
+      notes: data.notes?.trim() || null,
+      createdById: user.id,
+    });
+    revalidatePath(`/accounting/loans/${data.loanId}`);
+    return { success: true, loanTransactionId: result.loanTransactionId };
+  } catch (err) {
+    if (err instanceof LoanError) return { error: err.message };
+    throw err;
+  }
+}
+
+const topUpSchema = z.object({
+  loanId: z.string().min(1),
+  txnDate: z.string().min(1, "Date is required"),
+  amount: z.coerce.number().positive("Amount must be greater than zero"),
+  receivingAccountId: z.string().min(1, "Select where the top-up landed"),
+  notes: z.string().optional(),
+});
+
+export async function recordLoanTopUpAction(
+  input: z.infer<typeof topUpSchema>,
+): Promise<{ error: string } | { success: true; loanTransactionId: string }> {
+  const user = await requireUser();
+  assertCan(user.role, "accounting", "write");
+
+  const parsed = topUpSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const data = parsed.data;
+
+  try {
+    const result = await recordLoanTopUp({
+      loanId: data.loanId,
+      txnDate: new Date(data.txnDate),
+      amount: data.amount,
+      receivingAccountId: data.receivingAccountId,
+      notes: data.notes?.trim() || null,
+      createdById: user.id,
+    });
+    revalidatePath(`/accounting/loans/${data.loanId}`);
+    return { success: true, loanTransactionId: result.loanTransactionId };
+  } catch (err) {
+    if (err instanceof LoanError) return { error: err.message };
+    throw err;
+  }
+}
+
+const cancelLoanTransactionSchema = z.object({
+  loanTransactionId: z.string().min(1),
+  loanId: z.string().min(1),
+  reason: z.string().min(3, "Give a reason for the cancellation."),
+});
+
+export async function cancelLoanTransactionAction(
+  input: z.infer<typeof cancelLoanTransactionSchema>,
+): Promise<ActionResult> {
+  const user = await requireUser();
+  assertCan(user.role, "accounting", "approve");
+
+  const parsed = cancelLoanTransactionSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+
+  try {
+    await cancelLoanTransaction({
+      loanTransactionId: parsed.data.loanTransactionId,
+      reason: parsed.data.reason,
+      cancelledById: user.id,
+    });
+    revalidatePath(`/accounting/loans/${parsed.data.loanId}`);
     return { success: true };
   } catch (err) {
     if (err instanceof LoanError) return { error: err.message };

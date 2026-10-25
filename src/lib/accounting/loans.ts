@@ -4,7 +4,7 @@ import { postJournalEntry, reverseJournalEntry } from "./posting";
 import { requireAccount, loadAccountMap } from "./account-map";
 import { createLedgerAccount, nextChildCode, setLedgerAccountActive } from "./ledger-accounts";
 import { computeInstallmentSplit, LoanScheduleError } from "./loan-schedule";
-import { gt, money, round, sum, toAmountString, type Money, type MoneyInput } from "./money";
+import { add, gt, money, round, sub, sum, toAmountString, type Money, type MoneyInput } from "./money";
 import { logAudit } from "@/lib/audit";
 
 /**
@@ -15,10 +15,16 @@ import { logAudit } from "@/lib/audit";
  * be named on the balance sheet the same way a bank account is.
  *
  * `outstandingPrincipal` is deliberately never a stored column — it is
- * `principal` minus the sum of every non-cancelled repayment's
- * `principalPortion`, and it must equal the loan's own ledger account
- * balance to the paisa, the same rule every other derived balance in this
- * system follows.
+ * `principal` plus every non-cancelled `TOP_UP` minus the sum of every
+ * non-cancelled repayment's `principalPortion`, and it must equal the loan's
+ * own ledger account balance to the paisa, the same rule every other derived
+ * balance in this system follows.
+ *
+ * `LoanTransaction` (VYAPAR_PARITY_SPEC.md §2.4, G7) holds everything that
+ * isn't the disbursement or an EMI: `recordLoanFee` (a processing fee or an
+ * ad-hoc charge, paid from cash/bank, never touching the loan balance) and
+ * `recordLoanTopUp` (the opposite direction — increases the balance exactly
+ * like the disbursement).
  */
 
 export class LoanError extends Error {
@@ -146,11 +152,15 @@ export async function createLoan(
 export async function outstandingPrincipal(loanId: string, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Money> {
   const loan = await db.loan.findUnique({ where: { id: loanId }, select: { principal: true } });
   if (!loan) throw new LoanError("That loan does not exist.");
-  const repayments = await db.loanRepayment.findMany({
-    where: { loanId, cancelledAt: null },
-    select: { principalPortion: true },
-  });
-  return round(loan.principal.minus(sum(repayments.map((r) => r.principalPortion))));
+  const [repayments, topUps] = await Promise.all([
+    db.loanRepayment.findMany({ where: { loanId, cancelledAt: null }, select: { principalPortion: true } }),
+    // A TOP_UP (loans.ts step 3) increases the balance exactly like the
+    // original disbursement — omitted here, this function would drift from
+    // the loan account's real ledger balance the moment a top-up is posted.
+    db.loanTransaction.findMany({ where: { loanId, type: "TOP_UP", cancelledAt: null }, select: { amount: true } }),
+  ]);
+  const principalWithTopUps = loan.principal.plus(sum(topUps.map((t) => t.amount)));
+  return round(principalWithTopUps.minus(sum(repayments.map((r) => r.principalPortion))));
 }
 
 export type RecordRepaymentInput = {
@@ -337,6 +347,330 @@ export async function cancelLoan(
         action: "CANCEL",
         entityType: "Loan",
         entityId: loan.id,
+        newValue: { reason: input.reason },
+      },
+      tx,
+    );
+  };
+
+  if (existingTx) return run(existingTx);
+  return prisma.$transaction(run);
+}
+
+// ------------------------------------------------------------ R9 Loan Statement
+
+export type LoanStatementRow = {
+  date: Date;
+  type: "Disbursement" | "Top-up" | "Processing Fee" | "Charges" | "EMI Paid";
+  amount: Money;
+  endingBalance: Money;
+};
+export type LoanStatementResult = {
+  loanId: string;
+  lenderName: string;
+  openingBalance: Money;
+  rows: LoanStatementRow[];
+  balanceDue: Money;
+  totalPrincipalPaid: Money;
+  totalInterestPaid: Money;
+};
+
+/**
+ * Every event against one loan, with a running balance — Vyapar's "Loan
+ * Statement" (VYAPAR_PARITY_SPEC.md R9), confirmed against
+ * `vyapar/rea-test-reports/Loan Statement Report_*.xlsx`: a fee/charge row
+ * shows its amount but leaves Ending Balance unchanged; a disbursement or
+ * top-up increases it; an EMI reduces it by the instalment's principal
+ * portion only (the interest portion never touched the balance). "Total
+ * Principal/Interest Paid" are summed over instalments *within* the range,
+ * matching every other ranged report here — not a lifetime total.
+ */
+export async function loanStatement(
+  loanId: string,
+  fromDate: Date,
+  toDate: Date,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<LoanStatementResult> {
+  const loan = await db.loan.findUniqueOrThrow({ where: { id: loanId } });
+  const [repayments, transactions] = await Promise.all([
+    db.loanRepayment.findMany({ where: { loanId, cancelledAt: null }, orderBy: { paidDate: "asc" } }),
+    db.loanTransaction.findMany({ where: { loanId, cancelledAt: null }, orderBy: { txnDate: "asc" } }),
+  ]);
+
+  type Event = { date: Date; type: LoanStatementRow["type"]; amount: Money; balanceDelta: Money };
+  const loanTxnRowType = (t: "PROCESSING_FEE" | "CHARGES" | "TOP_UP"): LoanStatementRow["type"] =>
+    t === "TOP_UP" ? "Top-up" : t === "PROCESSING_FEE" ? "Processing Fee" : "Charges";
+
+  const disbursementEvent: Event = {
+    date: loan.startDate,
+    type: "Disbursement",
+    amount: money(loan.principal),
+    balanceDelta: money(loan.principal),
+  };
+  const transactionEvents: Event[] = transactions.map((t) => ({
+    date: t.txnDate,
+    type: loanTxnRowType(t.type),
+    amount: t.amount,
+    balanceDelta: t.type === "TOP_UP" ? t.amount : money(0),
+  }));
+  const repaymentEvents: Event[] = repayments.map((r) => ({
+    date: r.paidDate,
+    type: "EMI Paid",
+    amount: r.totalPaid,
+    balanceDelta: r.principalPortion.negated(),
+  }));
+  const events: Event[] = [disbursementEvent, ...transactionEvents, ...repaymentEvents].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
+
+  let running = money(0);
+  let openingBalance = money(0);
+  const rows: LoanStatementRow[] = [];
+  for (const e of events) {
+    if (e.date < fromDate) {
+      running = add(running, e.balanceDelta);
+      openingBalance = running;
+      continue;
+    }
+    if (e.date > toDate) break; // sorted ascending — nothing further applies within range
+    running = add(running, e.balanceDelta);
+    rows.push({ date: e.date, type: e.type, amount: e.amount, endingBalance: running });
+  }
+
+  const inRange = repayments.filter((r) => r.paidDate >= fromDate && r.paidDate <= toDate);
+  return {
+    loanId,
+    lenderName: loan.lenderName,
+    openingBalance,
+    rows,
+    balanceDue: await outstandingPrincipal(loanId, db),
+    totalPrincipalPaid: sum(inRange.map((r) => r.principalPortion)),
+    totalInterestPaid: sum(inRange.map((r) => r.interestPortion)),
+  };
+}
+
+// ------------------------------------------------------------ R10 Loan Account Summary
+
+export type LoanAccountSummaryRow = {
+  loanId: string;
+  lenderName: string;
+  status: string;
+  openingPrincipal: Money;
+  principalPaid: Money;
+  interestPaid: Money;
+  balance: Money;
+};
+
+/** One row per loan, as of a date — Vyapar's "Loan Account Summary" (R10). No single oracle export exists for this one; it reuses `outstandingPrincipal`'s own arithmetic, scoped to `asOfDate` instead of "now". */
+export async function loanAccountSummary(asOfDate: Date, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<LoanAccountSummaryRow[]> {
+  const loans = await db.loan.findMany({
+    where: { startDate: { lte: asOfDate } },
+    select: {
+      id: true,
+      lenderName: true,
+      principal: true,
+      status: true,
+      repayments: { where: { cancelledAt: null, paidDate: { lte: asOfDate } }, select: { principalPortion: true, interestPortion: true } },
+      transactions: { where: { cancelledAt: null, type: "TOP_UP", txnDate: { lte: asOfDate } }, select: { amount: true } },
+    },
+    orderBy: { startDate: "asc" },
+  });
+
+  return loans.map((l) => {
+    const principalPaid = sum(l.repayments.map((r) => r.principalPortion));
+    const interestPaid = sum(l.repayments.map((r) => r.interestPortion));
+    const openingPrincipal = add(money(l.principal), sum(l.transactions.map((t) => t.amount)));
+    return {
+      loanId: l.id,
+      lenderName: l.lenderName,
+      status: l.status,
+      openingPrincipal,
+      principalPaid,
+      interestPaid,
+      balance: sub(openingPrincipal, principalPaid),
+    };
+  });
+}
+
+export type RecordLoanFeeInput = {
+  loanId: string;
+  /** PROCESSING_FEE or CHARGES only — TOP_UP has its own function below (opposite posting direction). */
+  type: "PROCESSING_FEE" | "CHARGES";
+  txnDate: Date;
+  amount: MoneyInput;
+  /** Cash/bank account the fee or charge was paid from. */
+  paymentAccountId: string;
+  notes?: string | null;
+  createdById: string;
+};
+
+/**
+ * A one-off processing fee or an ad-hoc charge (VYAPAR_PARITY_SPEC.md §2.4,
+ * G7) — Dr the matching expense account (LOAN_PROCESSING_FEE / LOAN_CHARGES),
+ * Cr the paying account. Never touches the loan's own balance: a charge paid
+ * from cash/bank is an expense of the period it was paid in, not debt (D6's
+ * default — "added to the loan balance" is the unimplemented alternative).
+ */
+export async function recordLoanFee(
+  input: RecordLoanFeeInput,
+  existingTx?: Prisma.TransactionClient,
+): Promise<{ loanTransactionId: string }> {
+  const run = async (tx: Prisma.TransactionClient): Promise<{ loanTransactionId: string }> => {
+    const loan = await tx.loan.findUnique({ where: { id: input.loanId } });
+    if (!loan) throw new LoanError("That loan does not exist.");
+    if (loan.status === "CANCELLED") throw new LoanError("This loan has been cancelled.");
+
+    const amount = round(input.amount);
+    if (!gt(amount, 0)) throw new LoanError("Amount must be greater than zero.");
+
+    const txn = await tx.loanTransaction.create({
+      data: {
+        loanId: input.loanId,
+        type: input.type,
+        txnDate: input.txnDate,
+        amount,
+        accountId: input.paymentAccountId,
+        notes: input.notes?.trim() || null,
+        createdById: input.createdById,
+      },
+    });
+
+    const accountMap = await loadAccountMap(tx);
+    const expenseAccountId = requireAccount(accountMap, input.type === "PROCESSING_FEE" ? "LOAN_PROCESSING_FEE" : "LOAN_CHARGES");
+    const label = input.type === "PROCESSING_FEE" ? "Processing fee" : "Charges";
+
+    const posted = await postJournalEntry(
+      {
+        entryDate: input.txnDate,
+        narration: `${label} — ${loan.lenderName}`,
+        sourceType: "LOAN_TRANSACTION",
+        sourceId: txn.id,
+        idempotencyKey: `LOAN_TRANSACTION:${txn.id}:1`,
+        postedById: input.createdById,
+        lines: [
+          { accountId: expenseAccountId, debit: amount },
+          { accountId: input.paymentAccountId, credit: amount },
+        ],
+      },
+      tx,
+    );
+
+    await tx.loanTransaction.update({ where: { id: txn.id }, data: { postedEntryId: posted.entryId } });
+
+    await logAudit(
+      {
+        userId: input.createdById,
+        action: "CREATE",
+        entityType: "LoanTransaction",
+        entityId: txn.id,
+        newValue: { loanId: input.loanId, type: input.type, amount: toAmountString(amount) },
+      },
+      tx,
+    );
+
+    return { loanTransactionId: txn.id };
+  };
+
+  if (existingTx) return run(existingTx);
+  return prisma.$transaction(run);
+}
+
+export type RecordLoanTopUpInput = {
+  loanId: string;
+  txnDate: Date;
+  amount: MoneyInput;
+  /** Where the top-up landed — same shape as the original disbursement. */
+  receivingAccountId: string;
+  notes?: string | null;
+  createdById: string;
+};
+
+/**
+ * Increases the outstanding principal — Dr the receiving account, Cr the
+ * loan's own account, the same shape as `createLoan`'s disbursement. Only a
+ * still-ACTIVE loan can be topped up; `outstandingPrincipal` picks this up
+ * automatically (it sums every non-cancelled TOP_UP into the balance).
+ */
+export async function recordLoanTopUp(
+  input: RecordLoanTopUpInput,
+  existingTx?: Prisma.TransactionClient,
+): Promise<{ loanTransactionId: string }> {
+  const run = async (tx: Prisma.TransactionClient): Promise<{ loanTransactionId: string }> => {
+    const loan = await tx.loan.findUnique({ where: { id: input.loanId } });
+    if (!loan) throw new LoanError("That loan does not exist.");
+    if (loan.status !== "ACTIVE") throw new LoanError(`This loan is ${loan.status.toLowerCase()}, not active.`);
+
+    const amount = round(input.amount);
+    if (!gt(amount, 0)) throw new LoanError("Amount must be greater than zero.");
+
+    const txn = await tx.loanTransaction.create({
+      data: {
+        loanId: input.loanId,
+        type: "TOP_UP",
+        txnDate: input.txnDate,
+        amount,
+        accountId: input.receivingAccountId,
+        notes: input.notes?.trim() || null,
+        createdById: input.createdById,
+      },
+    });
+
+    const posted = await postJournalEntry(
+      {
+        entryDate: input.txnDate,
+        narration: `Top-up — ${loan.lenderName}`,
+        sourceType: "LOAN_TRANSACTION",
+        sourceId: txn.id,
+        idempotencyKey: `LOAN_TRANSACTION:${txn.id}:1`,
+        postedById: input.createdById,
+        lines: [
+          { accountId: input.receivingAccountId, debit: amount },
+          { accountId: loan.loanAccountId, credit: amount },
+        ],
+      },
+      tx,
+    );
+
+    await tx.loanTransaction.update({ where: { id: txn.id }, data: { postedEntryId: posted.entryId } });
+
+    await logAudit(
+      {
+        userId: input.createdById,
+        action: "CREATE",
+        entityType: "LoanTransaction",
+        entityId: txn.id,
+        newValue: { loanId: input.loanId, type: "TOP_UP", amount: toAmountString(amount) },
+      },
+      tx,
+    );
+
+    return { loanTransactionId: txn.id };
+  };
+
+  if (existingTx) return run(existingTx);
+  return prisma.$transaction(run);
+}
+
+/** Reverses a fee/charge/top-up's posting — never deletes the row, mirroring `cancelLoanRepayment`. */
+export async function cancelLoanTransaction(
+  input: { loanTransactionId: string; reason: string; cancelledById: string },
+  existingTx?: Prisma.TransactionClient,
+): Promise<void> {
+  const run = async (tx: Prisma.TransactionClient): Promise<void> => {
+    const txn = await tx.loanTransaction.findUnique({ where: { id: input.loanTransactionId } });
+    if (!txn) throw new LoanError("That loan transaction does not exist.");
+    if (txn.cancelledAt) throw new LoanError("Already cancelled.");
+    if (!txn.postedEntryId) throw new LoanError("This has no posting to reverse.");
+
+    await reverseJournalEntry({ entryId: txn.postedEntryId, reason: input.reason, postedById: input.cancelledById }, tx);
+    await tx.loanTransaction.update({ where: { id: txn.id }, data: { cancelledAt: new Date() } });
+
+    await logAudit(
+      {
+        userId: input.cancelledById,
+        action: "CANCEL",
+        entityType: "LoanTransaction",
+        entityId: txn.id,
         newValue: { reason: input.reason },
       },
       tx,

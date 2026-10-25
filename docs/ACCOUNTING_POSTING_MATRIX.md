@@ -237,3 +237,20 @@ Rules:
 - Cancelling a receipt or payment whose cheque is OPEN marks the cheque CANCELLED; the document's own reversal clears the holding account.
 - If the cheque is DEPOSITED or CLEARED, cancellation is refused until it is reopened. A bounced cheque is handled by reopen, then cancel receipt.
 - A cheque cannot be deposited or cleared before its cheque date.
+
+## Vyapar parity: loan fee, charges and top-up (2026-10-25)
+
+Source: `docs/VYAPAR_PARITY_SPEC.md` §2.4, G7. Implemented in `src/lib/accounting/loans.ts` as `LoanTransaction`, distinct from the disbursement (`createLoan`) and an EMI (`recordLoanRepayment`).
+
+| Event | Dr | Cr | sourceType | Idempotency key |
+|---|---|---|---|---|
+| Processing fee | `LOAN_PROCESSING_FEE` (5720) | Payment account (cash/bank) | LOAN_TRANSACTION | `LOAN_TRANSACTION:<id>:1` |
+| Charges | `LOAN_CHARGES` (5730) | Payment account | LOAN_TRANSACTION | same |
+| Top-up | Receiving account (cash/bank) | The loan's own account | LOAN_TRANSACTION | same |
+| Cancel a fee/charge/top-up | reversal of the above | | REVERSAL | n/a |
+
+Rules:
+- A fee/charge never touches the loan's own balance — it is an expense of the period paid, not added to the debt (decision D6's default). A top-up does the opposite: same shape as the disbursement, increasing the balance.
+- `outstandingPrincipal()` sums every non-cancelled `TOP_UP` into the balance alongside the original `principal`, so it still equals the loan account's own ledger balance to the paisa.
+- A fee/charge is refused once the loan is CANCELLED; a top-up additionally requires the loan to still be ACTIVE (not CLOSED either).
+- `allTransactionsReport()` (R3) shows a fee/charge as `paid`, a top-up as `received` — the same direction as a Payment-Out/loan-disbursement row.

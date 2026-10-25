@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { createLoan, recordLoanRepayment, cancelLoanRepayment, cancelLoan, outstandingPrincipal, LoanError } from "@/lib/accounting/loans";
+import type { Prisma } from "@/generated/prisma/client";
+import {
+  createLoan,
+  recordLoanRepayment,
+  cancelLoanRepayment,
+  cancelLoan,
+  recordLoanFee,
+  recordLoanTopUp,
+  cancelLoanTransaction,
+  outstandingPrincipal,
+  LoanError,
+} from "@/lib/accounting/loans";
 import { suggestEmi } from "@/lib/accounting/loan-schedule";
 import { toAmountString, sum } from "@/lib/accounting/money";
 import { withRollback, testUserId, openPeriodDate, accountId } from "./helpers/db";
@@ -185,6 +196,123 @@ describe("cancelLoan()", () => {
       );
       await recordLoanRepayment({ loanId, installmentNumber: 1, paidDate: date, paidFromAccountId: bank, createdById: userId }, tx);
       await expect(cancelLoan({ loanId, reason: "test", cancelledById: userId }, tx)).rejects.toThrow(LoanError);
+    });
+  });
+});
+
+describe("recordLoanFee() — Vyapar parity step 3 (G7)", () => {
+  async function loanFixture(tx: Prisma.TransactionClient) {
+    const userId = await testUserId(tx);
+    const date = await openPeriodDate(tx);
+    const bank = await accountId(tx, "1121");
+    const cash = await accountId(tx, "1110");
+    const { loanId } = await createLoan(
+      { lenderName: "Fee Test Bank", disbursedToAccountId: bank, principal: "100000", annualRatePercent: "12",
+        tenureMonths: 12, startDate: date, emiAmount: "9000", createdById: userId },
+      tx,
+    );
+    return { userId, date, bank, cash, loanId };
+  }
+
+  it("posts a processing fee to 5720, paid from cash, without touching the loan's own balance", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, cash, loanId } = await loanFixture(tx);
+      const feeAccount = await accountId(tx, "5720");
+
+      const { loanTransactionId } = await recordLoanFee(
+        { loanId, type: "PROCESSING_FEE", txnDate: date, amount: "1000", paymentAccountId: cash, createdById: userId },
+        tx,
+      );
+
+      const lines = await tx.journalLine.findMany({
+        where: { entry: { sourceType: "LOAN_TRANSACTION", sourceId: loanTransactionId } },
+      });
+      expect(lines).toHaveLength(2);
+      expect(lines.find((l) => l.accountId === feeAccount)!.debit.toFixed(2)).toBe("1000.00");
+      expect(lines.find((l) => l.accountId === cash)!.credit.toFixed(2)).toBe("1000.00");
+
+      expect(toAmountString(await outstandingPrincipal(loanId, tx))).toBe("100000.00");
+    });
+  });
+
+  it("posts a charge to 5730, under its own type", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, cash, loanId } = await loanFixture(tx);
+      const chargesAccount = await accountId(tx, "5730");
+
+      const { loanTransactionId } = await recordLoanFee(
+        { loanId, type: "CHARGES", txnDate: date, amount: "150", paymentAccountId: cash, createdById: userId },
+        tx,
+      );
+      const lines = await tx.journalLine.findMany({
+        where: { entry: { sourceType: "LOAN_TRANSACTION", sourceId: loanTransactionId } },
+      });
+      expect(lines.find((l) => l.accountId === chargesAccount)!.debit.toFixed(2)).toBe("150.00");
+    });
+  });
+
+  it("refuses a fee on a cancelled loan", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, cash, loanId } = await loanFixture(tx);
+      await cancelLoan({ loanId, reason: "test", cancelledById: userId }, tx);
+      await expect(
+        recordLoanFee({ loanId, type: "PROCESSING_FEE", txnDate: date, amount: "1000", paymentAccountId: cash, createdById: userId }, tx),
+      ).rejects.toThrow(LoanError);
+    });
+  });
+
+  it("cancelLoanTransaction reverses the posting and leaves the fee cancelled", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, cash, loanId } = await loanFixture(tx);
+      const { loanTransactionId } = await recordLoanFee(
+        { loanId, type: "PROCESSING_FEE", txnDate: date, amount: "1000", paymentAccountId: cash, createdById: userId },
+        tx,
+      );
+      await cancelLoanTransaction({ loanTransactionId, reason: "entered twice", cancelledById: userId }, tx);
+      const txn = await tx.loanTransaction.findUniqueOrThrow({ where: { id: loanTransactionId } });
+      expect(txn.cancelledAt).not.toBeNull();
+      await expect(
+        cancelLoanTransaction({ loanTransactionId, reason: "again", cancelledById: userId }, tx),
+      ).rejects.toThrow(/already cancelled/i);
+    });
+  });
+});
+
+describe("recordLoanTopUp() — Vyapar parity step 3 (G7)", () => {
+  it("increases outstandingPrincipal by the top-up, same shape as the disbursement", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const bank = await accountId(tx, "1121");
+      const { loanId } = await createLoan(
+        { lenderName: "Top-up Test Bank", disbursedToAccountId: bank, principal: "100000", annualRatePercent: "12",
+          tenureMonths: 12, startDate: date, emiAmount: "9000", createdById: userId },
+        tx,
+      );
+
+      await recordLoanTopUp({ loanId, txnDate: date, amount: "20000", receivingAccountId: bank, createdById: userId }, tx);
+      expect(toAmountString(await outstandingPrincipal(loanId, tx))).toBe("120000.00");
+
+      const loan = await tx.loan.findUniqueOrThrow({ where: { id: loanId } });
+      const lines = await tx.journalLine.findMany({ where: { accountId: loan.loanAccountId } });
+      expect(toAmountString(sum(lines.map((l) => l.credit)))).toBe("120000.00"); // original disbursement 100000 + top-up 20000
+    });
+  });
+
+  it("refuses a top-up on a closed or cancelled loan", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const bank = await accountId(tx, "1121");
+      const { loanId } = await createLoan(
+        { lenderName: "Closed Loan", disbursedToAccountId: bank, principal: "10000", annualRatePercent: "10",
+          tenureMonths: 12, startDate: date, emiAmount: "1000", createdById: userId },
+        tx,
+      );
+      await cancelLoan({ loanId, reason: "test", cancelledById: userId }, tx);
+      await expect(
+        recordLoanTopUp({ loanId, txnDate: date, amount: "5000", receivingAccountId: bank, createdById: userId }, tx),
+      ).rejects.toThrow(/not active/i);
     });
   });
 });

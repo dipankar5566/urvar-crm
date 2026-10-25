@@ -5,7 +5,9 @@ import { loadAccountMap, requireAccount } from "./account-map";
 import { add, money, sub, sum, type Money } from "./money";
 
 /**
- * Vyapar parity, step 2 (docs/VYAPAR_PARITY_SPEC.md §3.1, R1–R5).
+ * Vyapar parity, steps 2–3 (docs/VYAPAR_PARITY_SPEC.md §3.1, R1–R5; step 3
+ * adds loan fee/charge/top-up rows to `allTransactionsReport`, sourced from
+ * `loans.ts`'s `LoanTransaction`).
  *
  * Read-only, same rule as every other report in this directory: derived
  * from posted document rows, never an independent recomputation. Validated
@@ -346,7 +348,10 @@ export type AllTransactionsRow = {
     | "Payment-Out"
     | "Expense"
     | "Loan Disbursement"
-    | "Loan Repayment";
+    | "Loan Repayment"
+    | "Processing Fee"
+    | "Charges"
+    | "Top-up";
   total: Money;
   paymentType: string | null;
   paid: Money | null;
@@ -378,7 +383,7 @@ export async function allTransactionsReport(fromDate: Date, toDate: Date, db: Db
   // which is generated once from `txn_payment_mapping` at document creation
   // and never rewritten when a cheque later clears.
 
-  const [sales, receipts, purchases, payments, expenses, loans, repayments] = await Promise.all([
+  const [sales, receipts, purchases, payments, expenses, loans, repayments, loanTxns] = await Promise.all([
     db.salesInvoice.findMany({
       where: { ...NOT_CANCELLED_NOT_OPENING, invoiceDate: range },
       select: { id: true, invoiceDate: true, invoiceNumber: true, totalAmount: true, notes: true, customer: { select: { name: true } },
@@ -408,6 +413,10 @@ export async function allTransactionsReport(fromDate: Date, toDate: Date, db: Db
     db.loanRepayment.findMany({
       where: { cancelledAt: null, paidDate: range },
       select: { id: true, paidDate: true, installmentNumber: true, totalPaid: true, paidFromAccountId: true, loan: { select: { lenderName: true } } },
+    }),
+    db.loanTransaction.findMany({
+      where: { cancelledAt: null, txnDate: range },
+      select: { id: true, txnDate: true, type: true, amount: true, accountId: true, notes: true, loan: { select: { lenderName: true } } },
     }),
   ]);
 
@@ -468,6 +477,24 @@ export async function allTransactionsReport(fromDate: Date, toDate: Date, db: Db
       transactionType: "Loan Repayment", total: money(rep.totalPaid), paymentType: describe(rep.paidFromAccountId, "BANK_TRANSFER", null),
       paid: money(rep.totalPaid), received: null, balance: null, description: `Instalment #${rep.installmentNumber}`,
     });
+  }
+  // A fee/charge is paid out (Vyapar's oracle row for this: "Processing Fee",
+  // Paid=1000); a top-up is received in, the same direction as a disbursement.
+  for (const t of loanTxns) {
+    if (t.type === "TOP_UP") {
+      rows.push({
+        date: t.txnDate, referenceNo: null, partyName: t.loan.lenderName, categoryName: null,
+        transactionType: "Top-up", total: money(t.amount), paymentType: describe(t.accountId, "BANK_TRANSFER", null),
+        paid: null, received: money(t.amount), balance: null, description: t.notes,
+      });
+    } else {
+      rows.push({
+        date: t.txnDate, referenceNo: null, partyName: t.loan.lenderName, categoryName: t.loan.lenderName,
+        transactionType: t.type === "PROCESSING_FEE" ? "Processing Fee" : "Charges",
+        total: money(t.amount), paymentType: describe(t.accountId, "BANK_TRANSFER", null),
+        paid: money(t.amount), received: null, balance: null, description: t.notes,
+      });
+    }
   }
 
   return rows.sort((a, b) => a.date.getTime() - b.date.getTime());

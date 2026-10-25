@@ -5,11 +5,13 @@ import { createCashBankTransaction } from "@/lib/accounting/cash-bank";
 import { recordReceipt } from "@/lib/accounting/receipts";
 import { recordSupplierPayment } from "@/lib/accounting/supplier-payments";
 import { transferCheque } from "@/lib/accounting/cheques";
-import { createLoan, recordLoanRepayment } from "@/lib/accounting/loans";
+import { createLoan, recordLoanFee, recordLoanRepayment } from "@/lib/accounting/loans";
 import { createExpense, approveExpense } from "@/lib/accounting/expenses";
 import { createInvoiceFromOrder } from "@/lib/accounting/invoicing";
 import { postPurchaseInvoice } from "@/lib/accounting/purchase-posting";
-import { dayBookMoneyFlow } from "@/lib/accounting/financial-reports";
+import { dayBookMoneyFlow, journalEntryReport } from "@/lib/accounting/financial-reports";
+import { postJournalEntry } from "@/lib/accounting/posting";
+import { loanStatement, loanAccountSummary } from "@/lib/accounting/loans";
 import {
   saleReport,
   purchaseReport,
@@ -49,17 +51,17 @@ import {
  *    creates the sales invoice, then a *separate* receipt allocates 1000 to
  *    it, which is the same end state (received 1000, balance 1360) Vyapar
  *    reaches by bundling the payment on the Sale row itself.
- * 2. Loan processing fees aren't a modelled feature yet (G7, step 3) — the
- *    fixture pays the fee as a plain Expense. It shows up as an "Expense"
- *    row in All Transactions, not Vyapar's "Processing Fee" row, but the
- *    amount and its effect on cash are identical.
+ * 2. (Resolved in step 3.) The loan processing fee now goes through the real
+ *    `recordLoanFee()` (loans.ts) and shows up as its own "Processing Fee"
+ *    row in All Transactions and Loan Statement, matching the oracle.
  *
  * What's asserted is: (a) every ending balance in the spec's oracle table,
  * (b) R1/R2/R5's figures for the one sale, one purchase and one expense
  * that do map cleanly onto Vyapar's single-entry rows, (c) R3's shape for
- * the receipts/payments that have no sale/purchase behind them, and (d) R8's
+ * the receipts/payments that have no sale/purchase behind them, (d) R8's
  * Money In/Out classification for every cash/bank movement type, which is
- * the part of Vyapar's Day Book this scenario can match exactly.
+ * the part of Vyapar's Day Book this scenario can match exactly, and (e)
+ * R9's Loan Statement against `Loan Statement Report_*.xlsx` directly.
  */
 
 async function balance(tx: Prisma.TransactionClient, id: string): Promise<string> {
@@ -80,7 +82,6 @@ async function buildScenario(tx: Prisma.TransactionClient) {
   const cashId = await accountId(tx, "1110");
   const undepositedId = await accountId(tx, "1115");
   const unwithdrawnId = await accountId(tx, "2165");
-  const bankCharges = await accountId(tx, "5490");
   const rent = await accountId(tx, "5420");
 
   // Round 1 — two banks, cash.
@@ -133,12 +134,11 @@ async function buildScenario(tx: Prisma.TransactionClient) {
     { lenderName: "Test Loan", disbursedToAccountId: hdfc.ledgerAccountId, principal: "100000", annualRatePercent: "12", tenureMonths: 12, startDate: date, emiAmount: "9000", createdById: userId },
     tx,
   );
-  const feeExpense = await createExpense(
-    { expenseDate: date, categoryAccountId: bankCharges, payeeName: "Test Loan", description: "Processing fee", method: "CASH", paymentAccountId: cashId, amount: "1000", createdById: userId },
+  const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true } });
+  const fee = await recordLoanFee(
+    { loanId: loan.loanId, type: "PROCESSING_FEE", txnDate: date, amount: "1000", paymentAccountId: cashId, createdById: userId },
     tx,
   );
-  const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { role: true } });
-  await approveExpense({ expenseId: feeExpense.expenseId, approverRole: user.role, approvedById: userId }, tx);
   await recordLoanRepayment({ loanId: loan.loanId, installmentNumber: 1, paidDate: date, paidFromAccountId: hdfc.ledgerAccountId, createdById: userId }, tx);
 
   // Round 5 — sale (2 x 1000 @ 18%, 1000 received via HDFC), purchase (3 x 600 @ 18%, paid in full by cash), expense (Rent 350 cash).
@@ -198,7 +198,7 @@ async function buildScenario(tx: Prisma.TransactionClient) {
     userId, date, customer, supplier, product,
     cashId, hdfc, sbi, undepositedId, unwithdrawnId,
     receipt1, receipt2, receipt3, payment1, payment2,
-    loan, feeExpense, rentExpense,
+    loan, fee, rentExpense,
     invoiceId: invoice.invoiceId, purchaseInvoiceId: purchaseDraft.id,
   };
 }
@@ -270,11 +270,10 @@ describe("R3 All Transactions Report (vyapar/rea-test-reports/AllTransactionsRep
       // oracle's row) and payment2 (2124 cash, allocated to the purchase
       // invoice) — same structural reason as the Payment-In count above.
       expect(byType("Payment-Out")).toHaveLength(2);
-      // Expense: Rent + the loan processing fee (modelled as an Expense —
-      // see the module comment; Vyapar's own row for this is "Processing Fee").
-      expect(byType("Expense")).toHaveLength(2);
+      expect(byType("Expense")).toHaveLength(1); // Rent only — the loan fee has its own row type now
       expect(byType("Loan Disbursement")).toHaveLength(1);
       expect(byType("Loan Repayment")).toHaveLength(1);
+      expect(byType("Processing Fee")).toHaveLength(1);
 
       const cheque111 = byType("Payment-In").find((r) => r.paymentType === "Cheque (111111)");
       expect(cheque111).toBeDefined();
@@ -303,6 +302,12 @@ describe("R3 All Transactions Report (vyapar/rea-test-reports/AllTransactionsRep
 
       const emi = byType("Loan Repayment")[0];
       expect(toAmountString(emi.total)).toBe("9000.00"); // 8000 principal + 1000 interest
+
+      // Matches AllTransactionsReport_*.xlsx row 5 exactly: "Processing Fee", 1000, Paid=1000.
+      const processingFee = byType("Processing Fee")[0];
+      expect(toAmountString(processingFee.total)).toBe("1000.00");
+      expect(toAmountString(processingFee.paid!)).toBe("1000.00");
+      expect(processingFee.paymentType).toBe("Cash");
     });
   });
 });
@@ -420,6 +425,91 @@ describe("R8 Day Book check — Money In/Out (vyapar/rea-test-reports/Daybook_25
       expect(net.equals(totalIn.minus(totalOut))).toBe(true);
       expect(totalIn.greaterThan(0)).toBe(true);
       expect(totalOut.greaterThan(0)).toBe(true);
+    });
+  });
+});
+
+describe("R9 Loan Statement (vyapar/rea-test-reports/Loan Statement Report_01_10_26_to_25_10_26.xlsx)", () => {
+  it("matches the oracle's rows and summary exactly", async () => {
+    await withRollback(async (tx) => {
+      const s = await buildScenario(tx);
+      const result = await loanStatement(s.loan.loanId, s.date, s.date, tx);
+
+      expect(result.lenderName).toBe("Test Loan");
+      expect(toAmountString(result.openingBalance)).toBe("0.00"); // nothing happened before the range
+      expect(result.rows).toHaveLength(3);
+
+      const [disbursement, fee, emi] = result.rows;
+      expect(disbursement.type).toBe("Disbursement"); // oracle: "Opening Loan"
+      expect(toAmountString(disbursement.amount)).toBe("100000.00");
+      expect(toAmountString(disbursement.endingBalance)).toBe("100000.00");
+
+      expect(fee.type).toBe("Processing Fee");
+      expect(toAmountString(fee.amount)).toBe("1000.00");
+      expect(toAmountString(fee.endingBalance)).toBe("100000.00"); // unchanged — matches the oracle exactly
+
+      expect(emi.type).toBe("EMI Paid");
+      expect(toAmountString(emi.amount)).toBe("9000.00");
+      expect(toAmountString(emi.endingBalance)).toBe("92000.00");
+
+      // Oracle summary: Opening Balance 100000, Balance Due 92000,
+      // Total Principal Paid 8000, Total Interest Paid 1000.
+      expect(toAmountString(result.balanceDue)).toBe("92000.00");
+      expect(toAmountString(result.totalPrincipalPaid)).toBe("8000.00");
+      expect(toAmountString(result.totalInterestPaid)).toBe("1000.00");
+    });
+  });
+});
+
+describe("R10 Loan Account Summary", () => {
+  it("one row per loan with opening principal, paid principal/interest, and balance", async () => {
+    await withRollback(async (tx) => {
+      const s = await buildScenario(tx);
+      const rows = await loanAccountSummary(s.date, tx);
+      const row = rows.find((r) => r.loanId === s.loan.loanId);
+      expect(row).toBeDefined();
+      expect(row!.status).toBe("ACTIVE");
+      expect(toAmountString(row!.openingPrincipal)).toBe("100000.00");
+      expect(toAmountString(row!.principalPaid)).toBe("8000.00");
+      expect(toAmountString(row!.interestPaid)).toBe("1000.00");
+      expect(toAmountString(row!.balance)).toBe("92000.00");
+    });
+  });
+});
+
+describe("R12 Journal Entry Report", () => {
+  it("lists a manual journal entry's lines, and excludes every document-sourced entry", async () => {
+    await withRollback(async (tx) => {
+      const s = await buildScenario(tx);
+      const userId = await testUserId(tx);
+      const drawings = await accountId(tx, "3410"); // Capital Adjustments — any two postable accounts will do
+      const cash = s.cashId;
+
+      const posted = await postJournalEntry(
+        {
+          entryDate: s.date,
+          narration: "Owner's drawings, test fixture",
+          sourceType: "MANUAL",
+          idempotencyKey: `TEST_MANUAL:${s.loan.loanId}:1`,
+          postedById: userId,
+          lines: [
+            { accountId: drawings, debit: "500" },
+            { accountId: cash, credit: "500" },
+          ],
+        },
+        tx,
+      );
+
+      const rows = await journalEntryReport(s.date, s.date, tx);
+      const entryRows = rows.filter((r) => r.entryId === posted.entryId);
+      expect(entryRows).toHaveLength(2);
+      expect(toAmountString(entryRows.find((r) => r.accountCode === "3410")!.debit)).toBe("500.00");
+      expect(toAmountString(entryRows.find((r) => !r.accountCode.startsWith("3410"))!.credit)).toBe("500.00");
+
+      // Every other posting in this scenario (sale, purchase, receipts,
+      // loan events…) has a real sourceType of its own — none of them leak
+      // into a report that is deliberately scoped to MANUAL only.
+      expect(rows.every((r) => r.entryId === posted.entryId)).toBe(true);
     });
   });
 });

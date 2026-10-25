@@ -65,6 +65,10 @@ export const ACCOUNT_KEYS = [
   // Vyapar parity — cheques in transit (1115 / 2165).
   "UNDEPOSITED_CHEQUES",
   "UNWITHDRAWN_CHEQUES",
+
+  // Vyapar parity step 3 — loan fee/charges (5720 / 5730).
+  "LOAN_PROCESSING_FEE",
+  "LOAN_CHARGES",
 ] as const;
 
 export type AccountKey = (typeof ACCOUNT_KEYS)[number];

@@ -30,7 +30,7 @@ Evidence labels used below: **[R]** observed at runtime, **[X]** read from an ex
 | G4 | Cash↔bank, bank↔bank | Types 14/15/25 [R] | DEPOSIT / WITHDRAWAL / TRANSFER | ✅ Parity. Labels only |
 | G5 | Cheques | Receipt/payment by cheque → status row; Deposit/Withdraw moves it to a bank on a date; default accounts Undeposited Cheques (asset) and Unwithdrawn Cheques (liability) [R][X] | Receipts post straight to cash/bank | **Cheque lifecycle + clearing accounts** (§2.3) |
 | G6 | Split payment | `txn_payment_mapping` allows several payment methods per document [R] | One deposit account per receipt | **Spec decision D3** (deferred unless approved) |
-| G7 | Loans | Starting balance (40), processing fee (41), EMI with principal/interest (43); charges and adjustments [R][S] | Loan + EMI split ✅; no fee, charges or top-up | **Add fee / charges / top-up** (§2.4) |
+| G7 | Loans | Starting balance (40), processing fee (41), EMI with principal/interest (43); charges and adjustments [R][S] | ✅ (2026-10-25) Loan + EMI split; fee/charges/top-up via `LoanTransaction` (§2.4) | — |
 | G8 | Fixed assets | Buy/sell FA, opening FA, appreciate, depreciate [S] (license-locked) | ✅ Phase 9 (register, WDV depreciation, disposal) | Appreciation only if D5 = yes |
 | G9 | Journal entry | Journal + line items, party paid/received [S] (license-locked) | ✅ Phase 9 manual journal + reverse | Journal Entry **report** only (R12) |
 | G10 | Party balance sign | A customer in credit (advance) appears under **Sundry Creditors**, a supplier with a debit balance under **Sundry Debtors** [X] | Check `balanceSheet` / `allPartiesSummary` | **Verify and match** in R5/R9 |
@@ -130,10 +130,10 @@ Columns come from the exported Vyapar workbooks [X]. Every report takes a date r
 | R6 | **Bank Statement** (per bank) | Date, Transaction Details, Withdrawal, Deposit, Balance, Description; Total row | Compare with the existing `bank-report`; labels follow Vyapar ("[Cash Withdraw]", "To SBI Test", "[Payment-In] Cust A", "[Cheque Deposit] …", "[EMI Paid] …") |
 | R7 | **Cash in Hand statement** (Vyapar calls it "Cash Flow Report") | Date, Ref No, Name, Category, Type, Cash In, Cash Out, Running cash in hand, Description; Opening and Closing rows | Keep Urvar's `cashFlowSummary` as the real cash-flow statement; add this cash book alongside |
 | R8 | **Day Book** ✅ (checked, not rebuilt) | Name, Ref No, Type, Payment Type, Total, Money In, Money Out, Description; Total and Net rows | `dayBookMoneyFlow()` wraps the existing `dayBook()` with Money In/Out — see the amendment below for the netting rule this forced |
-| R9 | **Loan Statement** | Date, Type, Amount, Ending Balance; summary: Opening Balance, Balance Due, Total Principal Paid, Total Interest Paid | Fee rows don't change the ending balance [X] |
-| R10 | **Loan Account Summary** | Per loan: lender, opening, paid principal and interest, balance | |
+| R9 | **Loan Statement** ✅ | Date, Type, Amount, Ending Balance; summary: Opening Balance, Balance Due, Total Principal Paid, Total Interest Paid | `loanStatement()` in `loans.ts`. Fee rows don't change the ending balance [X], confirmed exactly against `Loan Statement Report_*.xlsx` |
+| R10 | **Loan Account Summary** ✅ | Per loan: lender, opening, paid principal and interest, balance | `loanAccountSummary()` in `loans.ts`. No single oracle export exists for this one; reuses `outstandingPrincipal`'s arithmetic, scoped "as of" a date |
 | R11 | **Other Income** (overall / by category / by item) | Mirrors the Expense Category / Item reports | Needs an Other Income document or posting; D8 |
-| R12 | **Journal Entry report** | Date, Ref, Account, Debit, Credit, Narration | From `JournalEntry` where sourceType = MANUAL |
+| R12 | **Journal Entry report** ✅ | Date, Ref, Account, Debit, Credit, Narration | `journalEntryReport()` in `financial-reports.ts`. From `JournalEntry` where sourceType = MANUAL |
 
 ### 3.3 GST and tax reports (labelled **"for review, not for filing"** until the accountant signs off)
 
@@ -221,7 +221,7 @@ Expected figures (from Vyapar's own exports [X]):
 
 1. G1 bank accounts, G2/G3 adjustments, G5 cheques (with R6 and R7).
 2. ✅ R1–R5 transaction reports; R8 Day Book check (2026-10-25 — see the amendment below).
-3. G7 loans, R9/R10; R12 journal report.
+3. ✅ G7 loans, R9/R10; R12 journal report (2026-10-25 — see the amendment below).
 4. §3.4 export registry (retrofit all existing and new reports).
 5. G14 purchase GST data, then R13–R16 (GSTR-1/2/3B, SAC, tax rate).
 6. R17 TCS/TDS (after D9); R11 other income (after D8).
@@ -249,3 +249,19 @@ REA round 7 showed that Vyapar has only **open** and **transferred** (deposited/
 **Two structural differences the oracle made unambiguous (both already documented at the top of `transaction-reports.ts`), confirmed by building the actual fixture rather than reading the spec in the abstract:**
 1. A `SalesInvoice`/`PurchaseInvoice` never carries a payment — Vyapar's single-entry Sale/Purchase document can, and its Day Book/All Transactions rows show a non-zero Money In/Out or Payment Type directly on that one row. In Urvar the same money shows up as a *separate*, independently dated `Receipt`/`SupplierPayment` document — so where the fixture's oracle-equivalent scenario has 2 Payment-In and 1 Payment-Out rows, Urvar's `allTransactionsReport` correctly has 3 and 2 (the extra one is the payment that happens to be allocated to an invoice created the same day) — not a bug, the aggregate totals (received, paid, balance) agree exactly.
 2. `allTransactionsReport`'s Payment Type column is **frozen as recorded**, not re-resolved against a cheque's later clearing state — `"Cheque (111111)"` stays that label even after the cheque deposits, matching the oracle (which is generated once from Vyapar's `txn_payment_mapping` at document creation and never rewritten). `saleReport`/`purchaseReport`'s per-bank breakdown, by contrast, *does* re-resolve a cleared cheque to its eventual bank — a deliberately different, invoice-centric view with no oracle row to contradict it.
+
+## Amendment 2026-10-25 (step 3): G7 loan fee/charges/top-up; R9/R10/R12 shipped
+
+**Schema:** `LoanTransaction` (new model, migration `20261025140000_loan_transactions`, applied to dev) + `LoanTransactionType` enum (`PROCESSING_FEE`, `CHARGES`, `TOP_UP`) + `JournalSourceType.LOAN_TRANSACTION`. Deliberately a separate model from `LoanRepayment` rather than a `kind` column on it — a fee/charge has no principal/interest split, and a top-up moves money the *opposite* direction (into the loan account, like the disbursement), neither of which fits `LoanRepayment`'s shape. Two new expense accounts: 5720 Loan Processing Fee, 5730 Loan Charges (under 5700 Finance Costs, alongside 5710 Interest Expense), with new `AccountMapping` keys `LOAN_PROCESSING_FEE`/`LOAN_CHARGES`.
+
+**`src/lib/accounting/loans.ts`:** `recordLoanFee()` (PROCESSING_FEE or CHARGES — Dr the matching expense account, Cr the payment account, never touching the loan balance, per decision D6's default), `recordLoanTopUp()` (same shape as the disbursement — Dr the receiving account, Cr the loan account), `cancelLoanTransaction()` (reversal, mirrors `cancelLoanRepayment`). `outstandingPrincipal()` now also sums non-cancelled `TOP_UP` amounts into the balance — backward compatible, since a loan with no top-ups sums zero.
+
+**R9 Loan Statement and R10 Loan Account Summary**, also in `loans.ts`. R9 was checked directly against `vyapar/rea-test-reports/Loan Statement Report_01_10_26_to_25_10_26.xlsx` — the oracle's exact shape (Date/Type/Amount/Ending Balance rows, with a fee row leaving the balance unchanged) and exact summary figures (Opening Balance 100000, Balance Due 92000, Total Principal Paid 8000, Total Interest Paid 1000) matched on the first attempt once `LoanTransaction` existed to drive it. R10 has no oracle export to check against (none of the 17 captured workbooks is a cross-loan summary) and reuses the same balance arithmetic, scoped "as of" a date instead of "now".
+
+**R12 Journal Entry Report**, added to `financial-reports.ts` — the one report scoped to `sourceType: "MANUAL"` on purpose, since every other posting already has its own document-shaped report.
+
+**`allTransactionsReport()` (R3) updated**: a `LoanTransaction` now contributes its own row — "Processing Fee"/"Charges" (shown as `paid`) or "Top-up" (shown as `received`) — replacing the test fixture's earlier workaround of modelling the loan processing fee as a plain `Expense` (documented in step 2's amendment above; that workaround is now resolved, not a permanent gap).
+
+**UI:** the loan detail page (`/accounting/loans/[loanId]`) gained a fee/charge form, a top-up form, a combined history table with cancel, and a "Statement" link to R9; the Reports index gained Loan Statement, Loan Account Summary and Journal Entry Report under Transaction Report.
+
+9 new tests (`tests/loans.test.ts`) plus 3 new `tests/vyapar-parity.test.ts` describe blocks (R9, R10, R12) — 325 total passing, `tsc --noEmit` and `eslint` clean.

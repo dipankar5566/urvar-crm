@@ -287,6 +287,7 @@ model User {
   bankAccountsCreated        BankAccount[]          @relation("BankAccountCreator")
   loansCreated               Loan[]                 @relation("LoanCreator")
   loanRepaymentsCreated      LoanRepayment[]        @relation("LoanRepaymentCreator")
+  loanTransactionsCreated    LoanTransaction[]      @relation("LoanTransactionCreator")
   fixedAssetsCreated         FixedAsset[]           @relation("FixedAssetCreator")
   depreciationEntriesCreated DepreciationEntry[]    @relation("DepreciationEntryCreator")
 
@@ -1106,6 +1107,10 @@ enum JournalSourceType {
   ASSET_DISPOSAL
   /// Vyapar parity — a cheque deposited/cleared into a bank (cheques.ts).
   CHEQUE_TRANSFER
+  /// Vyapar parity step 3 — a loan processing fee, charge or top-up
+  /// (`LoanTransaction`, loans.ts), distinct from the disbursement (LOAN)
+  /// and an EMI (LOAN_REPAYMENT).
+  LOAN_TRANSACTION
 }
 
 enum JournalEntryStatus {
@@ -1223,6 +1228,7 @@ model LedgerAccount {
   loanAccountFor           Loan[]                @relation("LoanAccount")
   loanDisbursements        Loan[]                @relation("LoanDisbursement")
   loanRepaymentsSource     LoanRepayment[]       @relation("LoanRepaymentSource")
+  loanTransactionAccountFor LoanTransaction[]    @relation("LoanTransactionAccount")
   fixedAssetAccountFor     FixedAsset[]          @relation("FixedAssetAccount")
   fixedAssetPaymentsSource FixedAsset[]          @relation("FixedAssetPaymentSource")
   // Vyapar parity — bank account master.
@@ -2262,7 +2268,8 @@ model Loan {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  repayments LoanRepayment[]
+  repayments   LoanRepayment[]
+  transactions LoanTransaction[]
 
   @@index([status])
 }
@@ -2300,6 +2307,50 @@ model LoanRepayment {
   /// schema.prisma, so "at most one ACTIVE repayment per instalment" is
   /// enforced in `loans.ts` instead, inside the same transaction as the insert.
   @@index([loanId, installmentNumber])
+  @@index([loanId])
+}
+
+/// Vyapar parity step 3 (docs/VYAPAR_PARITY_SPEC.md §2.4, G7): the loan events
+/// that are neither the disbursement nor an EMI — a one-off processing fee,
+/// an ad-hoc charge, or a top-up that increases the outstanding principal.
+/// Deliberately a separate model from `LoanRepayment` rather than a `kind`
+/// column on it: a fee/charge has no principal/interest split, and a top-up
+/// moves money the OPPOSITE direction (into the loan account, like the
+/// disbursement), neither of which fits LoanRepayment's shape.
+enum LoanTransactionType {
+  /// One-off fee at drawdown. Debits LOAN_PROCESSING_FEE, credits the paying account.
+  PROCESSING_FEE
+  /// An ad-hoc charge (e.g. a late fee). Same posting shape as PROCESSING_FEE,
+  /// debiting LOAN_CHARGES instead — paid from an account, per
+  /// VYAPAR_PARITY_SPEC.md decision D6 (not added to the loan balance).
+  CHARGES
+  /// Increases the outstanding principal — same posting shape as the
+  /// disbursement (Dr the receiving account, Cr the loan account).
+  TOP_UP
+}
+
+model LoanTransaction {
+  id     String              @id @default(cuid())
+  loanId String
+  loan   Loan                @relation(fields: [loanId], references: [id])
+  type   LoanTransactionType
+
+  txnDate DateTime
+  amount  Decimal  @db.Decimal(14, 2)
+
+  /// The account the fee/charge was paid from, or TOP_UP's receiving account.
+  accountId String
+  account   LedgerAccount @relation("LoanTransactionAccount", fields: [accountId], references: [id])
+
+  notes String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("LoanTransactionCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
   @@index([loanId])
 }
 

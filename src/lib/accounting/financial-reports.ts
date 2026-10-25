@@ -1165,3 +1165,45 @@ export async function cashOnHandBalance(asOfDate: Date, db: Db = prisma): Promis
   const balance = money(sub(agg._sum.debit, agg._sum.credit)); // Cash is debit-normal
   return { accountId: account.id, code: account.code, name: account.name, balance };
 }
+
+// ------------------------------------------------------------ R12 Journal Entry Report (Vyapar parity step 3)
+
+export type JournalEntryReportLine = {
+  entryId: string;
+  entryNumber: string;
+  entryDate: Date;
+  narration: string;
+  accountCode: string;
+  accountName: string;
+  debit: Money;
+  credit: Money;
+};
+
+/**
+ * Every manually-posted journal entry's lines in range — Vyapar's "Journal
+ * Entry Report" (R12). Scoped to `sourceType: "MANUAL"` on purpose: every
+ * other entry already has its own document-shaped report (a receipt has the
+ * Day Book/Sale Report, a loan repayment the Loan Statement…), and a manual
+ * journal is the one kind of posting with no document behind it at all.
+ */
+export async function journalEntryReport(fromDate: Date, toDate: Date, db: Db = prisma): Promise<JournalEntryReportLine[]> {
+  const entries = await db.journalEntry.findMany({
+    where: { sourceType: "MANUAL", ...NOT_DRAFT, entryDate: { gte: fromDate, lte: toDate } },
+    include: {
+      lines: { include: { account: { select: { code: true, name: true } } }, orderBy: { lineNumber: "asc" } },
+    },
+    orderBy: [{ entryDate: "asc" }, { entryNumber: "asc" }],
+  });
+  return entries.flatMap((e) =>
+    e.lines.map((l) => ({
+      entryId: e.id,
+      entryNumber: e.entryNumber,
+      entryDate: e.entryDate,
+      narration: e.narration,
+      accountCode: l.account.code,
+      accountName: l.account.name,
+      debit: l.debit,
+      credit: l.credit,
+    })),
+  );
+}

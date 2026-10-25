@@ -263,6 +263,22 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   // already does — a standalone leaf, not shoehorned into a full group.
   { code: "5700", name: "Finance Costs", type: "EXPENSE", parent: "5000", ...GROUP },
   { code: "5710", name: "Interest Expense", type: "EXPENSE", parent: "5700" },
+  {
+    code: "5720",
+    name: "Loan Processing Fee",
+    type: "EXPENSE",
+    parent: "5700",
+    description: "Vyapar parity step 3 (G7): a one-off fee at loan drawdown, recorded via LoanTransaction.",
+  },
+  {
+    code: "5730",
+    name: "Loan Charges",
+    type: "EXPENSE",
+    parent: "5700",
+    description:
+      "Vyapar parity step 3 (G7): an ad-hoc loan charge (e.g. a late fee), paid from an account per " +
+      "VYAPAR_PARITY_SPEC.md decision D6 — never added to the loan balance.",
+  },
 
   {
     code: "5800",
@@ -322,4 +338,8 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
   // Vyapar parity — cheques in transit.
   UNDEPOSITED_CHEQUES: "1115",
   UNWITHDRAWN_CHEQUES: "2165",
+
+  // Vyapar parity step 3 — loan fee/charges.
+  LOAN_PROCESSING_FEE: "5720",
+  LOAN_CHARGES: "5730",
 };
