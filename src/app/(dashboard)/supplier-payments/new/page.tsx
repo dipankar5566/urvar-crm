@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { assertCan } from "@/lib/permissions";
+import { requireCompany } from "@/lib/accounting/company";
 import { PageHeader } from "@/components/layout/page-header";
 import { RecordSupplierPaymentForm } from "./record-supplier-payment-form";
 
@@ -8,7 +9,8 @@ export default async function NewSupplierPaymentPage() {
   const user = await requireUser();
   assertCan(user.role, "purchases", "write");
 
-  const [suppliers, paymentAccounts] = await Promise.all([
+  const [company, suppliers, paymentAccounts] = await Promise.all([
+    requireCompany(),
     prisma.supplier.findMany({
       where: { isActive: true },
       select: { id: true, name: true, supplierCode: true },
@@ -32,7 +34,7 @@ export default async function NewSupplierPaymentPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Record Supplier Payment" subtitle="Money paid to a supplier." />
-      <RecordSupplierPaymentForm suppliers={suppliers} paymentAccounts={paymentAccounts} />
+      <RecordSupplierPaymentForm suppliers={suppliers} paymentAccounts={paymentAccounts} tdsCaptureEnabled={company.tdsCaptureEnabled} />
     </div>
   );
 }

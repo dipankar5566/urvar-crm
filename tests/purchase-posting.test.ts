@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { postPurchaseInvoice, cancelPurchaseInvoice } from "@/lib/accounting/purchase-posting";
 import { toAmountString, sum } from "@/lib/accounting/money";
 import {
-  withRollback, testUserId, openPeriodDate, testSupplier, testPurchaseInvoice,
+  withRollback, testUserId, openPeriodDate, testSupplier, testPurchaseInvoice, ensureVerifiedTaxRate,
 } from "./helpers/db";
 
 describe("postPurchaseInvoice(): intra-state", () => {
@@ -137,6 +137,87 @@ describe("cancelPurchaseInvoice()", () => {
       await expect(
         cancelPurchaseInvoice({ invoiceId: invoice.id, reason: "Too late", cancelledById: userId }, tx),
       ).rejects.toThrow(/payments allocated/i);
+    });
+  });
+});
+
+describe("postPurchaseInvoice(): line-priced path (Vyapar parity step 5, G14)", () => {
+  it("prices every line through the tax engine and overrides the header's OCR-read totals when every line has an HSN", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const supplier = await testSupplier(tx, { userId, state: "West Bengal" });
+      await ensureVerifiedTaxRate(tx, "9999PGST", 18);
+
+      // Header entered from a misread OCR scan (deliberately wrong) — the
+      // line-priced path must override it with the real figures below.
+      const invoice = await testPurchaseInvoice(tx, {
+        userId, supplierId: supplier.id, invoiceDate: date,
+        subtotal: "1", taxAmount: "1", totalAmount: "2",
+        items: [{ quantity: "3", unitPrice: "600", hsnCode: "9999PGST" }],
+      });
+
+      const result = await postPurchaseInvoice({ invoiceId: invoice.id, postedById: userId }, tx);
+
+      const updated = await tx.purchaseInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      // 3 x 600 = 1800 taxable, 18% = 324 (CGST 162 + SGST 162, intra-state).
+      expect(toAmountString(updated.subtotal)).toBe("1800.00");
+      expect(toAmountString(updated.taxAmount)).toBe("324.00");
+      expect(toAmountString(updated.totalAmount)).toBe("2124.00");
+      expect(toAmountString(updated.cgstAmount)).toBe("162.00");
+      expect(toAmountString(updated.sgstAmount)).toBe("162.00");
+      expect(updated.supplierGstin).toBe(supplier.gstNumber);
+      expect(updated.placeOfSupply).toBe("West Bengal");
+
+      const item = await tx.purchaseInvoiceItem.findFirstOrThrow({ where: { invoiceId: invoice.id } });
+      expect(toAmountString(item.taxableValue!)).toBe("1800.00");
+      expect(Number(item.taxRatePercent)).toBe(18);
+      expect(toAmountString(item.cgstAmount!)).toBe("162.00");
+
+      const lines = await tx.journalLine.findMany({ where: { entryId: result.journalEntryId } });
+      expect(toAmountString(sum(lines.map((l) => l.debit)))).toBe(toAmountString(sum(lines.map((l) => l.credit))));
+      expect(toAmountString(sum(lines.map((l) => l.debit)))).toBe("2124.00");
+    });
+  });
+
+  it("falls back to the header-blended split when even one line has no HSN", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const supplier = await testSupplier(tx, { userId, state: "West Bengal" });
+      await ensureVerifiedTaxRate(tx, "9999PGST2", 18);
+
+      const invoice = await testPurchaseInvoice(tx, {
+        userId, supplierId: supplier.id, invoiceDate: date,
+        subtotal: "1000", taxAmount: "50", totalAmount: "1050",
+        items: [
+          { quantity: "1", unitPrice: "600", hsnCode: "9999PGST2" },
+          { quantity: "1", unitPrice: "400" }, // no HSN — forces the fallback
+        ],
+      });
+
+      await postPurchaseInvoice({ invoiceId: invoice.id, postedById: userId }, tx);
+      const updated = await tx.purchaseInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      // Unchanged header figures, exactly as before this step shipped.
+      expect(toAmountString(updated.subtotal)).toBe("1000.00");
+      expect(toAmountString(updated.taxAmount)).toBe("50.00");
+      expect(toAmountString(updated.totalAmount)).toBe("1050.00");
+
+      const items = await tx.purchaseInvoiceItem.findMany({ where: { invoiceId: invoice.id } });
+      expect(items.every((i) => i.taxRatePercent === null)).toBe(true);
+    });
+  });
+
+  it("refuses to post when a line's HSN has no verified tax rate", async () => {
+    await withRollback(async (tx) => {
+      const userId = await testUserId(tx);
+      const date = await openPeriodDate(tx);
+      const supplier = await testSupplier(tx, { userId, state: "West Bengal" });
+      const invoice = await testPurchaseInvoice(tx, {
+        userId, supplierId: supplier.id, invoiceDate: date,
+        items: [{ quantity: "1", unitPrice: "100", hsnCode: "NOVERIFIEDRATE" }],
+      });
+      await expect(postPurchaseInvoice({ invoiceId: invoice.id, postedById: userId }, tx)).rejects.toThrow(/verified GST rate/i);
     });
   });
 });

@@ -373,3 +373,79 @@ describe("recordReceipt(): deposit account", () => {
     });
   });
 });
+
+describe("recordReceipt(): TDS deducted (Vyapar parity step 6, D9)", () => {
+  it("posts the withheld amount to TDS Receivable and extends the allocation cap", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice, bankId } = await setupInvoice(tx);
+
+      // Invoice total 1050.00; customer actually pays 1000.00 cash and
+      // withholds 50.00 as TDS — the full 1050.00 still settles the invoice.
+      const result = await recordReceipt({
+        customerId: customer.id,
+        receiptDate: date,
+        amount: "1000.00",
+        tdsDeducted: "50.00",
+        method: "BANK_TRANSFER",
+        depositAccountId: bankId,
+        allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }],
+        createdById: userId,
+      }, tx);
+
+      const updated = await tx.salesInvoice.findUniqueOrThrow({ where: { id: invoice.invoiceId } });
+      expect(updated.status).toBe("PAID");
+
+      const receiptRow = await tx.receipt.findUniqueOrThrow({ where: { id: result.receiptId } });
+      expect(toAmountString(receiptRow.tdsDeducted)).toBe("50.00");
+
+      const lines = await tx.journalLine.findMany({
+        where: { entryId: result.journalEntryId }, include: { account: { select: { code: true } } },
+      });
+      const tdsLine = lines.find((l) => l.account.code === "1145");
+      expect(toAmountString(tdsLine!.debit)).toBe("50.00");
+      expect(toAmountString(sum(lines.map((l) => l.debit)))).toBe(toAmountString(sum(lines.map((l) => l.credit))));
+    });
+  });
+
+  it("refuses a negative tdsDeducted", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice, bankId } = await setupInvoice(tx);
+      await expect(
+        recordReceipt({
+          customerId: customer.id, receiptDate: date, amount: "1000.00", tdsDeducted: "-10",
+          method: "CASH", depositAccountId: bankId,
+          allocations: [{ invoiceId: invoice.invoiceId, amount: "1000.00" }],
+          createdById: userId,
+        }, tx),
+      ).rejects.toThrow(/TDS deducted cannot be negative/i);
+    });
+  });
+
+  it("refuses allocations that exceed amount + tdsDeducted", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice, bankId } = await setupInvoice(tx);
+      await expect(
+        recordReceipt({
+          customerId: customer.id, receiptDate: date, amount: "100.00", tdsDeducted: "10.00",
+          method: "CASH", depositAccountId: bankId,
+          allocations: [{ invoiceId: invoice.invoiceId, amount: "500.00" }],
+          createdById: userId,
+        }, tx),
+      ).rejects.toThrow(/exceed the receipt amount plus TDS deducted/i);
+    });
+  });
+
+  it("defaults to zero TDS, unaffected existing callers", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, customer, invoice, bankId } = await setupInvoice(tx);
+      const result = await recordReceipt({
+        customerId: customer.id, receiptDate: date, amount: invoice.totalAmount, method: "CASH",
+        depositAccountId: bankId,
+        allocations: [{ invoiceId: invoice.invoiceId, amount: invoice.totalAmount }],
+        createdById: userId,
+      }, tx);
+      const receiptRow = await tx.receipt.findUniqueOrThrow({ where: { id: result.receiptId } });
+      expect(toAmountString(receiptRow.tdsDeducted)).toBe("0.00");
+    });
+  });
+});

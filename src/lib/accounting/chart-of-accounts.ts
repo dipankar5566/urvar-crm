@@ -74,6 +74,23 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
       "partyType/partyId on each journal line, not from a column on Customer.",
   },
   { code: "1140", name: "Advances to Suppliers", type: "ASSET", parent: "1100" },
+  {
+    code: "1145",
+    name: "TDS Receivable",
+    type: "ASSET",
+    parent: "1100",
+    description:
+      "Vyapar parity step 6 (D9, R17). What a customer withheld under Section 194Q etc. before " +
+      "paying Urvar — recoverable against Urvar's own tax liability via Form 26AS credit, not " +
+      "unpaid revenue. Posted by recordReceipt() when a receipt's tdsDeducted is non-zero.",
+  },
+  {
+    code: "1146",
+    name: "TCS Receivable",
+    type: "ASSET",
+    parent: "1100",
+    description: "Vyapar parity step 6 (D9, R17). Not yet posted to by anything — exists for the R17 report, same reasoning as 2141 TCS Payable.",
+  },
 
   { code: "1150", name: "Input GST (ITC)", type: "ASSET", parent: "1100", ...GROUP },
   { code: "1151", name: "Input CGST", type: "ASSET", parent: "1150" },
@@ -128,6 +145,16 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "2134", name: "Output Cess", type: "LIABILITY", parent: "2130" },
 
   { code: "2140", name: "TDS Payable", type: "LIABILITY", parent: "2100" },
+  {
+    code: "2141",
+    name: "TCS Payable",
+    type: "LIABILITY",
+    parent: "2100",
+    description:
+      "Vyapar parity step 6 (D9, R17). Not yet posted to by anything — Urvar collects no TCS today " +
+      "(Section 206C(1H) only applies above a large turnover threshold). Exists for the R17 report " +
+      "and so a future TCS-collection feature has somewhere to post, matching Vyapar's own default accounts.",
+  },
   { code: "2150", name: "Salaries Payable", type: "LIABILITY", parent: "2100" },
   { code: "2160", name: "Other Payables", type: "LIABILITY", parent: "2100" },
   {
@@ -298,6 +325,8 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
   AP_TRADE: "2110",
   ADVANCE_FROM_CUSTOMER: "2120",
   ADVANCE_TO_SUPPLIER: "1140",
+  TDS_RECEIVABLE: "1145",
+  TCS_RECEIVABLE: "1146",
 
   SALES_REVENUE: "4100",
   SALES_RETURNS: "4300",
@@ -342,4 +371,8 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
   // Vyapar parity step 3 — loan fee/charges.
   LOAN_PROCESSING_FEE: "5720",
   LOAN_CHARGES: "5730",
+
+  // Vyapar parity step 6 — TDS/TCS (D9, R17).
+  TDS_PAYABLE: "2140",
+  TCS_PAYABLE: "2141",
 };

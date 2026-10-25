@@ -39,7 +39,12 @@ export type Module =
   // bills, which already existed) because expenses have their own
   // separation-of-duties requirement — submit != approve — and mixing the
   // two would force purchases' RBAC history to be reinterpreted.
-  | "expenses";
+  | "expenses"
+  // Vyapar parity step 6 (D8, R11). Its own module for the same reason
+  // `expenses` has one, not folded into it — a different document type
+  // with its own submit/approve workflow, even though the two mirror each
+  // other closely.
+  | "otherIncome";
 
 /**
  * `approve` exists for separation of duties on financial documents: the right
@@ -81,6 +86,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     // never a delete, for every role including Super Admin.
     purchases: { read: "all", write: "all", delete: "none", approve: "all" },
     expenses: { read: "all", write: "all", delete: "none", approve: "all" },
+    otherIncome: { read: "all", write: "all", delete: "none", approve: "all" },
     field_visits: FULL,
     reports: READ_ALL,
     users: FULL,
@@ -110,6 +116,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     // purchase price and the quoted price knows the markup on every deal.
     purchases: NONE,
     expenses: NONE,
+    otherIncome: NONE,
     // Reads every rep's visits — the point of check-ins is oversight — but
     // cannot delete one, so the record of who was where cannot be rewritten.
     field_visits: { read: "all", write: "all", delete: "none", approve: "none" },
@@ -135,6 +142,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     products: READ_ALL,
     purchases: NONE,
     expenses: NONE,
+    otherIncome: NONE,
     field_visits: OWN_RW,
     reports: { read: "own", write: "none", delete: "none", approve: "none" },
     users: NONE,
@@ -159,6 +167,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     products: READ_ALL,
     purchases: NONE,
     expenses: NONE,
+    otherIncome: NONE,
     field_visits: { read: "own", write: "own", delete: "none", approve: "none" },
     reports: TERRITORY_R,
     users: NONE,
@@ -185,6 +194,7 @@ export const PERMISSIONS: Record<Role, RolePerms> = {
     // approving their own submission unless they hold the Super Admin
     // exemption, so the role grant alone is not the whole control.
     expenses: { read: "all", write: "all", delete: "none", approve: "all" },
+    otherIncome: { read: "all", write: "all", delete: "none", approve: "all" },
     // Field visits are a sales-supervision record with nothing financial in
     // them; accounts has no reason to see which rep stood where.
     field_visits: NONE,

@@ -172,3 +172,79 @@ describe("cancelSupplierPayment()", () => {
     });
   });
 });
+
+describe("recordSupplierPayment(): TDS deducted (Vyapar parity step 6, D9)", () => {
+  it("posts the withheld amount to TDS Payable and extends the allocation cap", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, supplier, invoice, cashId } = await setupPostedInvoice(tx);
+
+      // Invoice total 1050.00; Urvar pays 1000.00 cash and withholds 50.00
+      // as TDS owed to the government — the full 1050.00 still settles it.
+      const result = await recordSupplierPayment({
+        supplierId: supplier.id,
+        paymentDate: date,
+        amount: "1000.00",
+        tdsDeducted: "50.00",
+        method: "BANK_TRANSFER",
+        paymentAccountId: cashId,
+        allocations: [{ invoiceId: invoice.id, amount: "1050.00" }],
+        createdById: userId,
+      }, tx);
+
+      const updated = await tx.purchaseInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      expect(updated.status).toBe("PAID");
+
+      const paymentRow = await tx.supplierPayment.findUniqueOrThrow({ where: { id: result.paymentId } });
+      expect(toAmountString(paymentRow.tdsDeducted)).toBe("50.00");
+
+      const lines = await tx.journalLine.findMany({
+        where: { entryId: result.journalEntryId }, include: { account: { select: { code: true } } },
+      });
+      const tdsLine = lines.find((l) => l.account.code === "2140");
+      expect(toAmountString(tdsLine!.credit)).toBe("50.00");
+      expect(toAmountString(sum(lines.map((l) => l.debit)))).toBe(toAmountString(sum(lines.map((l) => l.credit))));
+    });
+  });
+
+  it("refuses a negative tdsDeducted", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, supplier, invoice, cashId } = await setupPostedInvoice(tx);
+      await expect(
+        recordSupplierPayment({
+          supplierId: supplier.id, paymentDate: date, amount: "1000.00", tdsDeducted: "-10",
+          method: "CASH", paymentAccountId: cashId,
+          allocations: [{ invoiceId: invoice.id, amount: "1000.00" }],
+          createdById: userId,
+        }, tx),
+      ).rejects.toThrow(/TDS deducted cannot be negative/i);
+    });
+  });
+
+  it("refuses allocations that exceed amount + tdsDeducted", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, supplier, invoice, cashId } = await setupPostedInvoice(tx);
+      await expect(
+        recordSupplierPayment({
+          supplierId: supplier.id, paymentDate: date, amount: "100.00", tdsDeducted: "10.00",
+          method: "CASH", paymentAccountId: cashId,
+          allocations: [{ invoiceId: invoice.id, amount: "500.00" }],
+          createdById: userId,
+        }, tx),
+      ).rejects.toThrow(/exceed the payment amount plus TDS deducted/i);
+    });
+  });
+
+  it("defaults to zero TDS, unaffected existing callers", async () => {
+    await withRollback(async (tx) => {
+      const { userId, date, supplier, invoice, cashId } = await setupPostedInvoice(tx);
+      const result = await recordSupplierPayment({
+        supplierId: supplier.id, paymentDate: date, amount: "1050.00", method: "CASH",
+        paymentAccountId: cashId,
+        allocations: [{ invoiceId: invoice.id, amount: "1050.00" }],
+        createdById: userId,
+      }, tx);
+      const paymentRow = await tx.supplierPayment.findUniqueOrThrow({ where: { id: result.paymentId } });
+      expect(toAmountString(paymentRow.tdsDeducted)).toBe("0.00");
+    });
+  });
+});

@@ -281,6 +281,8 @@ model User {
   supplierPaymentsCreated    SupplierPayment[]      @relation("SupplierPaymentCreator")
   expensesCreated            Expense[]              @relation("ExpenseCreator")
   expensesApproved           Expense[]              @relation("ExpenseApprover")
+  otherIncomeCreated         OtherIncome[]          @relation("OtherIncomeCreator")
+  otherIncomeApproved        OtherIncome[]          @relation("OtherIncomeApprover")
   stockValuationsCreated     StockValuation[]       @relation("StockValuationCreator")
   // Phase 9 — Cash, Bank, Loans & Fixed Assets.
   cashBankTxnsCreated        CashBankTransaction[]  @relation("CashBankTxnCreator")
@@ -967,6 +969,17 @@ enum PurchaseInvoiceStatus {
   CANCELLED
 }
 
+/// Vyapar parity step 5 (docs/VYAPAR_PARITY_SPEC.md §2.5, G14) — ITC
+/// classification for GSTR-2/3B. Vyapar's own label for the common case is
+/// "Inputs". A header-level field, not per-line: the spec research never
+/// found Vyapar varying this within one invoice.
+enum ItcEligibility {
+  INPUTS
+  CAPITAL_GOODS
+  INPUT_SERVICES
+  INELIGIBLE
+}
+
 model PurchaseInvoice {
   id            String   @id @default(cuid())
   /// The supplier's own invoice number, not ours — so it is unique per
@@ -993,6 +1006,23 @@ model PurchaseInvoice {
   cgstAmount   Decimal  @default(0) @db.Decimal(14, 2)
   sgstAmount   Decimal  @default(0) @db.Decimal(14, 2)
   igstAmount   Decimal  @default(0) @db.Decimal(14, 2)
+  /// Vyapar parity step 5 (G14). Added alongside the three above rather than
+  /// folded into igst — a cess (e.g. on tobacco) is a distinct levy even on
+  /// an inter-state supply.
+  cessAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Frozen from Supplier.gstNumber at posting, same moment isInterState is
+  /// decided — never read live off Supplier afterward, matching
+  /// SalesInvoice.customerGstin's own convention.
+  supplierGstin String?
+  /// Frozen from Supplier.state at posting. Same value isInterState already
+  /// compares against; stored separately because a GSTR register needs the
+  /// place of supply printed on the row, not re-derived from a live join.
+  placeOfSupply String?
+  isReverseCharge Boolean @default(false)
+  /// Vyapar's own label for the common case is "Inputs". A header-level
+  /// field — see the enum's own comment for why this isn't per-line.
+  itcEligibility ItcEligibility @default(INPUTS)
 
   status PurchaseInvoiceStatus @default(DRAFT)
 
@@ -1041,6 +1071,23 @@ model PurchaseInvoiceItem {
   quantity    Decimal         @db.Decimal(12, 2)
   unitPrice   Decimal         @db.Decimal(12, 2)
   lineTotal   Decimal         @db.Decimal(14, 2)
+
+  /// Vyapar parity step 5 (docs/VYAPAR_PARITY_SPEC.md §2.5, G14). All six
+  /// nullable, unlike SalesInvoiceItem's equivalents: an existing
+  /// OCR-captured line never has these, and a return built from one must
+  /// show "line tax unavailable" rather than a false zero. Entered by hand
+  /// at intake (OCR extracts no HSN or per-line rate); priced through
+  /// tax.ts the same way a sales line is, resolved and frozen at posting —
+  /// see purchase-posting.ts for the dual path this creates (line-priced
+  /// when every item has an hsnCode, the original header-blended split
+  /// otherwise, never a partial mix of the two on one invoice).
+  hsnCode        String?
+  taxRatePercent Decimal? @db.Decimal(5, 2)
+  taxableValue   Decimal? @db.Decimal(14, 2)
+  cgstAmount     Decimal? @db.Decimal(14, 2)
+  sgstAmount     Decimal? @db.Decimal(14, 2)
+  igstAmount     Decimal? @db.Decimal(14, 2)
+  cessAmount     Decimal? @db.Decimal(14, 2)
 
   @@index([invoiceId])
 }
@@ -1111,6 +1158,9 @@ enum JournalSourceType {
   /// (`LoanTransaction`, loans.ts), distinct from the disbursement (LOAN)
   /// and an EMI (LOAN_REPAYMENT).
   LOAN_TRANSACTION
+  /// Vyapar parity step 6 (D8, R11) — OtherIncome's own posting, the dual
+  /// of EXPENSE.
+  OTHER_INCOME
 }
 
 enum JournalEntryStatus {
@@ -1170,6 +1220,14 @@ model Company {
   fyStartMonth Int     @default(4)
   isActive     Boolean @default(true)
 
+  /// Vyapar parity step 6 (docs/VYAPAR_PARITY_SPEC.md D9, R17). Off by
+  /// default — whether Urvar needs to capture TDS at all is an accountant's
+  /// call, not assumed. Purely a UI gate: recordReceipt()/
+  /// recordSupplierPayment() always accept `tdsDeducted` regardless of this
+  /// flag (it defaults to 0 either way), this only controls whether the
+  /// receipt/payment forms show the field.
+  tdsCaptureEnabled Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1181,6 +1239,7 @@ model Company {
   purchaseInvoices PurchaseInvoice[]
   supplierPayments SupplierPayment[]
   expenses         Expense[]
+  otherIncomes     OtherIncome[]
   stockValuations  StockValuation[]
 }
 
@@ -1222,6 +1281,8 @@ model LedgerAccount {
   supplierPaymentsSource   SupplierPayment[]     @relation("SupplierPaymentSource")
   expenseCategoryFor       Expense[]             @relation("ExpenseCategory")
   expensePaymentsSource    Expense[]             @relation("ExpensePaymentSource")
+  otherIncomeCategoryFor   OtherIncome[]         @relation("OtherIncomeCategory")
+  otherIncomeDepositFor    OtherIncome[]         @relation("OtherIncomeDeposit")
   // Phase 9 — Cash, Bank, Loans & Fixed Assets.
   cashBankTxnDebits        CashBankTransaction[] @relation("CashBankTxnDebit")
   cashBankTxnCredits       CashBankTransaction[] @relation("CashBankTxnCredit")
@@ -1649,6 +1710,12 @@ model Receipt {
 
   receiptDate DateTime
   amount      Decimal  @db.Decimal(14, 2)
+  /// Vyapar parity step 6 (D9, R17). What the customer withheld under
+  /// Section 194Q etc. before paying — recoverable (TDS_RECEIVABLE), not
+  /// unpaid revenue, so `amount + tdsDeducted` is what actually settles an
+  /// allocation, not `amount` alone. Zero for every receipt before this
+  /// shipped and for any receipt recorded with the capture setting off.
+  tdsDeducted Decimal @default(0) @db.Decimal(14, 2)
 
   method    PaymentMethod
   /// UTR, cheque number, UPI reference. Free text by necessity.
@@ -1829,6 +1896,11 @@ model SupplierPayment {
 
   paymentDate DateTime
   amount      Decimal  @db.Decimal(14, 2)
+  /// Vyapar parity step 6 (D9, R17). What Urvar withheld before paying this
+  /// supplier — owed to the government (TDS_PAYABLE), not money the
+  /// supplier is still due, so `amount + tdsDeducted` settles the
+  /// allocation. Zero for every payment before this shipped.
+  tdsDeducted Decimal @default(0) @db.Decimal(14, 2)
 
   method    PaymentMethod
   reference String?
@@ -1973,6 +2045,96 @@ model ExpenseItem {
   lineNumber Int
 
   @@index([expenseId])
+}
+
+/// Vyapar parity step 6 (docs/VYAPAR_PARITY_SPEC.md D8, R11) — the dual of
+/// Expense: miscellaneous income that isn't a sale (scrap sale, bank
+/// interest, a one-off service charge), too small and infrequent to deserve
+/// its own invoice pipeline. Mirrors Expense's shape with Dr/Cr reversed:
+/// money comes IN (depositAccountId, not paymentAccountId) and the tax it
+/// carries is always GST_OUTPUT (Urvar is the one collecting it here, never
+/// a claimable credit) — so there is no `claimInputCredit`-style toggle.
+enum OtherIncomeStatus {
+  DRAFT
+  SUBMITTED
+  /// Posted and received, in one step — same reasoning as Expense's own.
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model OtherIncome {
+  id           String  @id @default(cuid())
+  incomeNumber String  @unique
+  companyId    String
+  company      Company @relation(fields: [companyId], references: [id])
+
+  incomeDate        DateTime
+  categoryAccountId String
+  categoryAccount   LedgerAccount @relation("OtherIncomeCategory", fields: [categoryAccountId], references: [id])
+
+  payerName   String
+  description String?
+  amount      Decimal @db.Decimal(14, 2)
+
+  /// True once this income carries itemised GST-priced lines — mirrors
+  /// Expense.isGstApplicable exactly, legacy flat-amount path unaffected.
+  isGstApplicable Boolean @default(false)
+
+  subtotal   Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  roundOff   Decimal @default(0) @db.Decimal(6, 2)
+
+  method          PaymentMethod
+  /// The cash/bank account the money landed in.
+  depositAccountId String
+  depositAccount   LedgerAccount @relation("OtherIncomeDeposit", fields: [depositAccountId], references: [id])
+
+  status OtherIncomeStatus @default(DRAFT)
+
+  submittedAt    DateTime?
+  approvedById   String?
+  approvedBy     User?     @relation("OtherIncomeApprover", fields: [approvedById], references: [id])
+  approvedAt     DateTime?
+  rejectedReason String?
+
+  postedEntryId String?   @unique
+  cancelledAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("OtherIncomeCreator", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items OtherIncomeItem[]
+
+  @@index([status])
+  @@index([incomeDate])
+  @@index([categoryAccountId])
+}
+
+/// One line of an itemised Other Income entry — mirrors ExpenseItem exactly.
+model OtherIncomeItem {
+  id            String      @id @default(cuid())
+  otherIncomeId String
+  otherIncome   OtherIncome @relation(fields: [otherIncomeId], references: [id], onDelete: Cascade)
+
+  description String
+
+  quantity  Decimal @db.Decimal(12, 2)
+  unitPrice Decimal @db.Decimal(12, 2)
+
+  taxRatePercent Decimal @default(0) @db.Decimal(5, 2)
+  taxableValue   Decimal @db.Decimal(14, 2)
+  taxAmount      Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal      Decimal @db.Decimal(14, 2)
+
+  lineNumber Int
+
+  @@index([otherIncomeId])
 }
 
 // ============================================================

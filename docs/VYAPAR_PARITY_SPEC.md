@@ -37,7 +37,7 @@ Evidence labels used below: **[R]** observed at runtime, **[X]** read from an ex
 | G11 | Bank reconciliation | Decoded `BANK_RECONCILIATION_*` / bank-linking constants [S]; **no reconcile UI** on the test company | None | **Urvar-designed statement import + match** (§4) |
 | G12 | Reports | Approx. 100 report titles decoded; 17 exported | 25 report functions | **New reports in §3** |
 | G13 | Export | Every report exports to Excel (main sheet + "Item Details" sheet) and prints [X] | ✅ (2026-10-26) `report-registry.ts` — all 32 reports, XLSX + PDF | — |
-| G14 | GST data | HSN on item; per-line tax id; supplier GSTIN on party [R] | Purchase lines have no HSN or per-line tax; no supplier GSTIN on invoice | **Schema additions** (§2.5) |
+| G14 | GST data | HSN on item; per-line tax id; supplier GSTIN on party [R] | ✅ (2026-10-26) `PurchaseInvoiceItem.hsnCode`/tax fields (nullable), `PurchaseInvoice.supplierGstin`/`placeOfSupply`/`itcEligibility` (§2.5) | — |
 | G15 | Stock | Perpetual quantity on item [R] | Periodic valuation (deliberate); stock in ERP DB | Stock reports **later phase** |
 
 ## 2. Business and posting rules (to be added to `ACCOUNTING_POSTING_MATRIX.md`)
@@ -132,16 +132,16 @@ Columns come from the exported Vyapar workbooks [X]. Every report takes a date r
 | R8 | **Day Book** ✅ (checked, not rebuilt) | Name, Ref No, Type, Payment Type, Total, Money In, Money Out, Description; Total and Net rows | `dayBookMoneyFlow()` wraps the existing `dayBook()` with Money In/Out — see the amendment below for the netting rule this forced |
 | R9 | **Loan Statement** ✅ | Date, Type, Amount, Ending Balance; summary: Opening Balance, Balance Due, Total Principal Paid, Total Interest Paid | `loanStatement()` in `loans.ts`. Fee rows don't change the ending balance [X], confirmed exactly against `Loan Statement Report_*.xlsx` |
 | R10 | **Loan Account Summary** ✅ | Per loan: lender, opening, paid principal and interest, balance | `loanAccountSummary()` in `loans.ts`. No single oracle export exists for this one; reuses `outstandingPrincipal`'s arithmetic, scoped "as of" a date |
-| R11 | **Other Income** (overall / by category / by item) | Mirrors the Expense Category / Item reports | Needs an Other Income document or posting; D8 |
+| R11 | **Other Income** (overall / by category / by item) ✅ | Mirrors the Expense Category / Item reports | `otherIncomeCategoryReport()`/`otherIncomeItemReport()` in `financial-reports.ts`, backed by the new `OtherIncome`/`OtherIncomeItem` document — D8, step 6 |
 | R12 | **Journal Entry report** ✅ | Date, Ref, Account, Debit, Credit, Narration | `journalEntryReport()` in `financial-reports.ts`. From `JournalEntry` where sourceType = MANUAL |
 
 ### 3.3 GST and tax reports (labelled **"for review, not for filing"** until the accountant signs off)
 
-- **R13 GSTR-1.** Sheets matching the GST offline-tool sections [X]: summary, `b2b,sez,de`, `b2cl`, `b2cs` (Type OE, Place of Supply, Rate, Taxable Value, Cess), `cdnr`, `cdnur`, `exp`, `at`, `atadj`, `exemp`, `hsn(b2b)`, `hsn(b2c)` (HSN, Description, UQC, Total Qty, Total Value, Rate, Taxable, IGST, CGST, SGST, Cess), `docs` (document serial ranges and cancelled count, which `DocumentSeries` can supply).
-- **R14 GSTR-2.** Sheets: `b2b`, `b2bur`, `imps`, `impg`, `cdnr`, `cdnur`, `at`, `atadj`, `exemp`, `itcr`, `hsnsum`, with ITC eligibility and availed columns.
-- **R15 GSTR-3B.** Table 3.1 (a)–(e); 3.2 (inter-state supplies to unregistered / composition / UIN holders); 4 (A)(1)–(5) ITC available, (D) ineligible incl. Sec 17(5); 5 (exempt / nil / non-GST inward).
-- **R16 SAC Wise Summary** (services). **GST Tax Rate Report.**
-- **R17 TCS/TDS** payable and receivable, and **Form 27EQ.** These need TCS capture on sales and TDS on payments. Urvar has `TDS Payable` (2140) but no TCS accounts; add TCS Payable/Receivable and TDS Receivable, matching Vyapar's default `other_accounts` [R].
+- **R13 GSTR-1** ✅ (`gstr1Report()`, `gstr-reports.ts`). Shipped: `GSTR1 Report` (main flat list), `b2b`, `b2cs`, `cdnr`, `cdnur`, `exemp` (zero-shell), `hsn(b2b)`, `hsn(b2c)`, `docs`. Not implemented — no data behind them, confirmed against the oracle itself: `b2cl` (large B2C, a dying provision), `exp` (exports), `at`/`atadj` (advances, not tracked separately from the invoice they're later applied to).
+- **R14 GSTR-2** ✅. Shipped: `GSTR2 Report`, `b2b`, `b2bur`, `exemp`/`itcr` (zero-shell, matching the oracle's own all-zero shape), `hsnsum`. Only purchases on G14's line-priced path (every item has an HSN) contribute. Not implemented: `imps`/`impg` (imports), `at`/`atadj` (advance under reverse charge), `cdnr`/`cdnur` (returned empty — no `DebitNote` model exists yet, only the reserved enum value).
+- **R15 GSTR-3B** ✅. Shipped: table 3.1 (a)/(d), (b)/(c)/(e) zero-shell; 3.2 (unregistered only — composition/UIN columns are always zero, not tracked); 4(A)(3)/(5), (D)(2) (4(A)(1)/(2)/(4) and 4(D)(1) are always zero — imports, ISD and *which* ineligibility rule applied aren't tracked); table 5 zero-shell.
+- **R16 SAC Wise Summary** (services) — not applicable, consistent with `hsnSummary()`'s own existing comment: Urvar sells physical goods, not services. **GST Tax Rate Report** ✅ (`gstTaxRateReport()`).
+- **R17 TCS/TDS** payable and receivable ✅ (`tdsTcsReport()`), **Form 27EQ out of scope** — D9, step 6. TDS is real: `Receipt`/`SupplierPayment` gained `tdsDeducted`, posted to the new `TDS_RECEIVABLE` (1145)/`TDS_PAYABLE` (2140, pre-existing) accounts, gated on `Company.tdsCaptureEnabled` (UI-only; the backend always accepts the field). TCS is stub accounts only (`TCS_RECEIVABLE` 1146, `TCS_PAYABLE` 2141) — nothing posts to them; see the step-6 amendment below for why.
 - GSTR-4/9/9A, VAT 201 and Drug Schedule are **out of scope**.
 
 ### 3.4 Export (G13) ✅ shipped 2026-10-26 — see the step-4 amendment below
@@ -180,8 +180,8 @@ Vyapar's reconciliation is online bank linking with no visible UI on the test co
 | D5 | Asset appreciation (revaluation) needed? | Accountant | No |
 | D6 | Loan charges: added to loan balance or paid from cash/bank? | Accountant | Paid from account |
 | D7 | Party groups for R4: new field on Customer/Supplier? | Management | Add `partyGroup` string |
-| D8 | Other Income: new document type, or a manual journal to income accounts? | Accountant | New lightweight document |
-| D9 | TCS/TDS: does Urvar collect TCS on sales or deduct TDS on payments today? | Accountant | Build reports; capture behind a setting |
+| D8 | Other Income: new document type, or a manual journal to income accounts? | Accountant | New lightweight document — ✅ shipped step 6 (default taken) |
+| D9 | TCS/TDS: does Urvar collect TCS on sales or deduct TDS on payments today? | Accountant | Build reports; capture behind a setting — ✅ shipped step 6 (default taken; TDS capture real, TCS stub-only) |
 | D10 | GST open questions carried over from `ACCOUNTING_IMPLEMENTATION_PLAN.md` (GSTIN/state, HSN rates, e-invoice, reverse charge, Sec 17(5)) | Accountant | No legal-compliance claim; "for review" label |
 
 ## 6. Parity test oracle (Vitest, dev DB, `withRollback`)
@@ -223,8 +223,8 @@ Expected figures (from Vyapar's own exports [X]):
 2. ✅ R1–R5 transaction reports; R8 Day Book check (2026-10-25 — see the amendment below).
 3. ✅ G7 loans, R9/R10; R12 journal report (2026-10-25 — see the amendment below).
 4. ✅ §3.4 export registry, retrofitted onto all existing and new reports (2026-10-26 — see the amendment below).
-5. G14 purchase GST data, then R13–R16 (GSTR-1/2/3B, SAC, tax rate).
-6. R17 TCS/TDS (after D9); R11 other income (after D8).
+5. ✅ G14 purchase GST data, then R13–R16 (GSTR-1/2/3B, SAC, tax rate) — 2026-10-26, see the amendment below.
+6. ✅ R17 TCS/TDS (after D9); R11 other income (after D8) — 2026-10-26, see the amendment below.
 7. §4 bank reconciliation; §3.5 Close Books and Custom Report.
 8. Later phase: stock reports, after the ERP postgres_fdw link.
 
@@ -279,3 +279,39 @@ REA round 7 showed that Vyapar has only **open** and **transferred** (deposited/
 **PDF scope**: one shared landscape, auto-width table template renders whichever sheet would be sheet 1 of the XLSX. A report with an Item Details second sheet (R1/R2/R3) prints only the first — multi-sheet output is what a spreadsheet is for, and building 30+ bespoke PDF layouts to match Vyapar's own print formats isn't proportionate to what this project needs from PDF export.
 
 **Verification**: every registered report's `load()` was run against the dev DB via a throwaway script (deleted afterward) before writing permanent tests — all 32 resolved without error, and `renderReportPdf()` was confirmed to produce a real PDF (`%PDF` header) in isolation. `tests/report-registry.test.ts` then locked in the parts worth asserting: the filename convention, row-flattening into plain numbers/strings for day-book/sale-report/ar-ageing/loan-statement/party-statement/ledger/gst/cash-bank-assets, and a blanket "every range/asOf-only report still loads" sweep. 338 tests pass total, `tsc --noEmit` and `eslint` clean across the repo.
+
+## Amendment 2026-10-26 (step 5): G14 purchase GST data; R13–R16 shipped
+
+**Schema (G14):** `PurchaseInvoiceItem` gained `hsnCode`, `taxRatePercent`, `taxableValue`, `cgstAmount`, `sgstAmount`, `igstAmount`, `cessAmount` — all nullable, since an existing OCR-captured line has none and a return built from one must show "unavailable" rather than a false zero. `PurchaseInvoice` gained `supplierGstin`/`placeOfSupply` (frozen at posting, same moment `isInterState` is decided — mirrors `SalesInvoice.customerGstin`'s convention exactly), `cessAmount`, `isReverseCharge`, and `itcEligibility` (new `ItcEligibility` enum: INPUTS/CAPITAL_GOODS/INPUT_SERVICES/INELIGIBLE — header-level, not per-line; the spec research never found Vyapar varying it within one invoice). Migration `20261026090000_purchase_gst_data`, applied to dev only.
+
+**`purchase-posting.ts` gained a second posting path.** When every line on an invoice has an `hsnCode` (entered by hand at intake — Sarvam OCR extracts none), tax is resolved and split line-by-line exactly the way `invoicing.ts` prices a sales line, and that line-summed figure *overrides* the invoice's header subtotal/tax/total — more accurate than the OCR-read figure, the same "lines are the source of truth, the header is derived" rule the sales side already follows, and safe because nothing can have been paid against a still-DRAFT invoice. When even one line lacks an `hsnCode`, the original header-blended split runs completely unchanged — there is no partial mix of the two paths on one invoice, and every invoice captured before this shipped keeps posting exactly as it always did (confirmed: all pre-existing purchase-posting/payables/supplier-payment/fixed-assets/financial-reports tests pass unmodified).
+
+**Intake UI** (`purchases/new/invoice-intake.tsx`): an optional HSN input per line, and an ITC-eligibility select + reverse-charge checkbox on the header, defaulting to the common case (Inputs, forward charge) — same "everything editable, nothing write-through" posture the rest of the form already has. The detail page shows HSN/per-line tax and the new header fields once posted.
+
+**One item from §2.5 deliberately not done: "fix the sales line discount (always 0 today)".** `SalesInvoiceItem.discountPercent` is hardcoded `0` at invoice creation (`invoicing.ts`) because `OrderItem` has no discount column of its own — `orderItemsFromQuotation()` folds a quotation line's discount into a lower `unitPrice` instead, which is a *deliberate, already-shipped, regression-tested* design (the QT-2026-0004/ORD-2026-0138 fix, `tests/order-from-quotation.test.ts`'s "folds a line discount into the unit price" test). Reversing it to restore a real `discountPercent` would relitigate that fix for a reporting-display gap, not a correctness bug — the taxable value is already right (it's computed from the already-discounted price, which is exactly what GST taxes). Left for `itemWiseDiscount`/`discountReport` to keep showing 0% on a quotation-sourced invoice until someone explicitly decides the tradeoff is worth it.
+
+**R13/R14/R15 (`gstr-reports.ts`)** were shaped against real Vyapar exports, not the GST portal's documentation — `vyapar/rea-test-reports/GSTR{1,2,3B} Report_10_26_to_10_26.xlsx` — and every figure in the single-sale/single-purchase oracle scenario was reproduced exactly (taxable 2000/1800, CGST+SGST 180/180 and 162/162, HSN quantity 2/3, "Inputs" eligibility carrying the full tax into Availed ITC) via a scratch fixture before `tests/gstr-reports.test.ts` was written. One real bug this caught before it shipped: `gstOutwardSupplyRegister()`'s `OutwardSupplyRow` never exposed line `quantity` (the query already fetched it; nothing read it), so GSTR-1's `hsn(b2c)` sheet showed `"Total Quantity": 0` against the oracle's `2` — fixed by adding the field, which `hsnSummary()` (the only other caller) doesn't read and is unaffected by.
+
+**R16**: SAC Wise Summary is not applicable — Urvar sells physical goods, not services, the same conclusion `hsnSummary()`'s own pre-existing comment already reached. GST Tax Rate Report ships instead, listing every `TaxRate` row and its verification status.
+
+**All four wired into the step-4 export registry** (`gstr1`/`gstr2`/`gstr3b`/`gst-tax-rate`), new pages under `/accounting/reports/{gstr1,gstr2,gstr3b,gst-tax-rate}`, each rendered through a new shared `<SheetTable>` component (one table per sheet, columns derived the same way the XLSX export derives them).
+
+16 new tests (3 in `purchase-posting.test.ts`, 13 in `gstr-reports.test.ts`). 354 tests pass total. `tsc --noEmit` and `eslint` clean.
+
+## Amendment 2026-10-26 (step 6): R11 Other Income + D8; R17 TCS/TDS + D9 shipped
+
+**D8/R11 — Other Income, both defaults taken.** New `OtherIncome`/`OtherIncomeItem` models and `OtherIncomeStatus` enum (DRAFT/SUBMITTED/APPROVED/REJECTED/CANCELLED), mirroring `Expense`/`ExpenseItem` field-for-field with every Dr/Cr reversed: money comes IN (`depositAccountId`, not `paymentAccountId`), and `categoryAccountId` must resolve to a postable `INCOME`-typed account (the pre-existing `4900 Other Income` leaf qualifies — no new chart-of-accounts entry needed). There is deliberately no `claimInputCredit`-equivalent toggle: any GST an Other Income entry carries is output tax Urvar now owes (`GST_OUTPUT_CGST/SGST/IGST`), never a choice, because a seller doesn't get to decide not to recognise tax it collected. Lifecycle, self-approval rule (`canSelfApprove`), and round-off sign convention (credits Round Off on rounding up — the mirror image of `expenses.ts`, which debits it) all match `expenses.ts` exactly; see `src/lib/accounting/other-income.ts`.
+
+Full module shipped: `other-income/{page.tsx,actions.ts,new/{page.tsx,new-other-income-form.tsx},[incomeId]/{page.tsx,other-income-actions.tsx}}`, `otherIncome` added to the `Module` permissions matrix (mirrors `expenses`' access for all 5 roles), nav entry added. **Scope cut deliberately taken to control cost:** the "new entry" form is flat-amount-only — no itemised-lines UI toggle, no attachment upload (Other Income entries are miscellaneous and infrequent; there's no OCR intake to speak of, unlike a supplier bill or expense receipt). `createOtherIncome()` itself fully supports itemised GST-priced lines (needed for the GSTR reports below) — that path is reachable via the server action/tests today, just not this simple form.
+
+Two reports, mirroring `expenseCategoryReport()`/`expenseItemReport()` exactly: `otherIncomeCategoryReport()`, `otherIncomeItemReport()` in `financial-reports.ts`, wired into the step-4 export registry as `other-income-category-report`/`other-income-item-report`, with report pages reusing the `expense-category-report`/`expense-item-report` page pattern verbatim.
+
+**D9/R17 — TCS/TDS, default taken, with TDS real and TCS deliberately stub-only.** Two new accounts (`1145 TDS Receivable`, `1146 TCS Receivable`) alongside the pre-existing `2140 TDS Payable`, plus one new liability (`2141 TCS Payable`) — all four wired into `AccountMapping` (`TDS_RECEIVABLE`/`TCS_RECEIVABLE`/`TDS_PAYABLE`/`TCS_PAYABLE`).
+
+TDS is a real, additive extension to the two already-tested payment-posting functions: `Receipt`/`SupplierPayment` each gained a `tdsDeducted` column (default 0), and `recordReceipt()`/`recordSupplierPayment()` each gained a `tdsDeducted` input. The allocation cap becomes `amount + tdsDeducted` rather than `amount` alone — a customer who pays ₹1,000 cash and withholds ₹50 TDS still fully settles a ₹1,050 invoice — and a non-zero `tdsDeducted` posts one extra balanced line (`TDS_RECEIVABLE` debit on the receipt side, `TDS_PAYABLE` credit on the payment side). Entirely backward compatible: `tdsDeducted` defaults to 0, and the full existing 354-test suite passed unchanged before any new TDS test was added. Gated end-to-end by a new `Company.tdsCaptureEnabled` boolean (default `false`) — pure UI gate: the backend accepts `tdsDeducted` regardless, so flipping the flag is a data change, not a deploy. The Receipt and Supplier Payment "new" forms show the field only when the flag is on, folding it into their client-side allocation/advance math the same way the server does.
+
+TCS (Section 206C(1H)) is intentionally **not** implemented beyond the two stub accounts — materially higher uncertainty than TDS-on-payments: it's turnover-threshold-gated, needs buyer-wise cumulative tracking Urvar doesn't do, and (unlike TDS, which slots into two already-existing posting functions) would need a new collection point on the sales side with no natural home yet. `tdsTcsReport()` in `financial-reports.ts` reports all four accounts' balances "for review" regardless — TCS simply shows zero until something posts to it — wired into the export registry as `tds-tcs-report`.
+
+Migration `20261026110000_other_income_tds_tcs`, applied to dev only (schema.prisma edited → `prisma migrate status` confirmed no drift → `prisma migrate diff --from-config-datasource` → read, confirmed no `DROP`/`TRUNCATE` → `db:dev:migrate` → `db:generate`). `db:dev:seed-accounting` installed the 3 new accounts and 4 new mappings (84 accounts, 38/38 mappings present).
+
+24 new tests (16 in `other-income.test.ts`, 4 each in `receipts.test.ts`/`supplier-payments.test.ts` for TDS capture) plus the 3 new report-registry entries (`report-registry.test.ts`'s hardcoded count bumped 36 → 39). 378 tests pass total. `tsc --noEmit` and `eslint` clean.

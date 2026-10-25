@@ -208,7 +208,8 @@ export async function testPurchaseInvoice(
     totalAmount?: string | number;
     invoiceNumber?: string;
     status?: "DRAFT" | "POSTED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
-    items?: { productId?: string; quantity: string | number; unitPrice: string | number }[];
+    /** `hsnCode` (Vyapar parity step 5, G14): set on every item to exercise purchase-posting.ts's line-priced path, omit to keep the header-blended fallback. */
+    items?: { productId?: string; quantity: string | number; unitPrice: string | number; hsnCode?: string }[];
   },
 ) {
   const n = ++seq;
@@ -219,6 +220,7 @@ export async function testPurchaseInvoice(
       quantity: String(item.quantity),
       unitPrice: String(item.unitPrice),
       lineTotal: (Number(item.quantity) * Number(item.unitPrice)).toFixed(2),
+      hsnCode: item.hsnCode ?? null,
     })) ?? null;
 
   const subtotal =

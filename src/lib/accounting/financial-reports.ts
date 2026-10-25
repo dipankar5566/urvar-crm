@@ -327,6 +327,7 @@ export type OutwardSupplyRow = {
   customerGstin: string | null;
   placeOfSupply: string;
   hsnCode: string;
+  quantity: Money;
   taxableValue: Money;
   taxRatePercent: Money;
   cgst: Money;
@@ -374,6 +375,7 @@ export async function gstOutwardSupplyRegister(
     customerGstin: item.invoice.customerGstin,
     placeOfSupply: item.invoice.placeOfSupply,
     hsnCode: item.hsnCode ?? "—",
+    quantity: item.quantity,
     taxableValue: item.taxableValue,
     taxRatePercent: item.taxRatePercent,
     cgst: item.cgstAmount,
@@ -1105,6 +1107,85 @@ export async function expenseItemReport(fromDate: Date, toDate: Date, db: Db = p
     byDescription.set(key, row);
   }
   return [...byDescription.values()].sort((a, b) => b.totalValue.comparedTo(a.totalValue));
+}
+
+// ------------------------------------------------------------ Other Income reports (Vyapar parity step 6, D8, R11)
+
+export type OtherIncomeCategoryRow = { accountId: string; code: string; name: string; total: Money; count: number };
+
+/** Approved other-income entries grouped by category account — the mirror of expenseCategoryReport(). */
+export async function otherIncomeCategoryReport(fromDate: Date, toDate: Date, db: Db = prisma): Promise<OtherIncomeCategoryRow[]> {
+  const grouped = await db.otherIncome.groupBy({
+    by: ["categoryAccountId"],
+    where: { status: "APPROVED", incomeDate: { gte: fromDate, lte: toDate } },
+    _sum: { amount: true },
+    _count: { _all: true },
+  });
+  if (grouped.length === 0) return [];
+  const accounts = await db.ledgerAccount.findMany({
+    where: { id: { in: grouped.map((g) => g.categoryAccountId) } },
+    select: { id: true, code: true, name: true },
+  });
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  return grouped
+    .map((g) => {
+      const account = byId.get(g.categoryAccountId)!;
+      return { accountId: account.id, code: account.code, name: account.name, total: money(g._sum.amount ?? 0), count: g._count._all };
+    })
+    .sort((a, b) => b.total.comparedTo(a.total));
+}
+
+export type OtherIncomeItemRow = { description: string; quantity: Money; totalValue: Money };
+
+/** Approved other-income entries' itemised lines, grouped by description — the mirror of expenseItemReport(). */
+export async function otherIncomeItemReport(fromDate: Date, toDate: Date, db: Db = prisma): Promise<OtherIncomeItemRow[]> {
+  const items = await db.otherIncomeItem.findMany({
+    where: { otherIncome: { status: "APPROVED", incomeDate: { gte: fromDate, lte: toDate } } },
+    select: { description: true, quantity: true, lineTotal: true },
+  });
+  const byDescription = new Map<string, OtherIncomeItemRow>();
+  for (const item of items) {
+    const key = item.description.trim().toLowerCase();
+    const row = byDescription.get(key) ?? { description: item.description, quantity: money(0), totalValue: money(0) };
+    row.quantity = add(row.quantity, item.quantity);
+    row.totalValue = add(row.totalValue, item.lineTotal);
+    byDescription.set(key, row);
+  }
+  return [...byDescription.values()].sort((a, b) => b.totalValue.comparedTo(a.totalValue));
+}
+
+// ------------------------------------------------------------ TDS/TCS report (Vyapar parity step 6, D9, R17)
+
+export type TdsTcsRow = { accountId: string; code: string; name: string; type: "ASSET" | "LIABILITY"; balance: Money };
+
+/**
+ * Balances of TDS/TCS Payable and Receivable as of a date — "for review,
+ * not for filing", same posture as the GST registers; Form 27EQ isn't
+ * built, there's nothing to populate it from (TCS capture doesn't exist
+ * yet — see 2141/1146's own chart-of-accounts comments). TDS Receivable
+ * (1145) and TDS Payable (2140) do carry real balances once `recordReceipt`/
+ * `recordSupplierPayment` are used with `tdsDeducted` — gated on
+ * `Company.tdsCaptureEnabled`.
+ */
+export async function tdsTcsReport(asOfDate: Date, db: Db = prisma): Promise<TdsTcsRow[]> {
+  const codes = ["1145", "1146", "2140", "2141"]; // TDS Receivable, TCS Receivable, TDS Payable, TCS Payable
+  const accounts = await db.ledgerAccount.findMany({ where: { code: { in: codes } }, select: { id: true, code: true, name: true, type: true } });
+  if (accounts.length === 0) return [];
+
+  const grouped = await db.journalLine.groupBy({
+    by: ["accountId"],
+    where: { accountId: { in: accounts.map((a) => a.id) }, entry: { ...NOT_DRAFT, entryDate: { lte: asOfDate } } },
+    _sum: { debit: true, credit: true },
+  });
+  const sumsById = new Map(grouped.map((g) => [g.accountId, g._sum]));
+
+  return accounts
+    .map((a) => {
+      const sums = sumsById.get(a.id);
+      const net = sub(sums?.debit, sums?.credit); // ASSET (Receivable) is debit-normal; LIABILITY (Payable) is credit-normal
+      return { accountId: a.id, code: a.code, name: a.name, type: a.type as "ASSET" | "LIABILITY", balance: a.type === "ASSET" ? net : net.negated() };
+    })
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 // ------------------------------------------------------------ Cash, Bank & Assets

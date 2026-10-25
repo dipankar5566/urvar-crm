@@ -29,6 +29,8 @@ export const DOCUMENT_TYPES = {
   DEBIT_NOTE: "DEBIT_NOTE",
   SUPPLIER_PAYMENT: "SUPPLIER_PAYMENT",
   EXPENSE: "EXPENSE",
+  /// Vyapar parity step 6 (D8, R11).
+  OTHER_INCOME: "OTHER_INCOME",
 } as const;
 
 export type DocumentType = (typeof DOCUMENT_TYPES)[keyof typeof DOCUMENT_TYPES];
@@ -42,6 +44,7 @@ const DEFAULT_PREFIX: Record<DocumentType, string> = {
   DEBIT_NOTE: "DBN",
   SUPPLIER_PAYMENT: "SPY",
   EXPENSE: "EXP",
+  OTHER_INCOME: "OIN",
 };
 
 export type AllocateArgs = {

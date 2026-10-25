@@ -5,7 +5,7 @@ import { postJournalEntry, reverseJournalEntry } from "./posting";
 import { requireCompany } from "./company";
 import { financialYearOf } from "./fiscal";
 import { allocateDocumentNumber, DOCUMENT_TYPES } from "./numbering";
-import { add, gt, money, round, sub, sum, toAmountString, type Money } from "./money";
+import { add, gt, isNegative, money, round, sub, sum, toAmountString, type Money } from "./money";
 import { logAudit } from "@/lib/audit";
 import { loadAccountMap, requireAccount } from "./account-map";
 import { ChequeError, openChequeForSupplierPayment, releaseChequeForCancellation } from "./cheques";
@@ -40,6 +40,13 @@ export type RecordSupplierPaymentInput = {
   allocations?: SupplierAllocationInput[];
   notes?: string | null;
   createdById: string;
+  /**
+   * Vyapar parity step 6 (D9, R17). What Urvar withheld before paying this
+   * supplier — owed to the government (`TDS_PAYABLE`), so it settles an
+   * allocation exactly like cash does: `amount + tdsDeducted` is the real
+   * cap, not `amount` alone. Mirrors `recordReceipt()`'s own field.
+   */
+  tdsDeducted?: string | number;
 };
 
 export type RecordSupplierPaymentResult = {
@@ -96,6 +103,8 @@ export async function recordSupplierPayment(
 
     const amount = round(input.amount);
     if (!gt(amount, 0)) throw new SupplierPaymentError("Payment amount must be greater than zero.");
+    const tdsDeducted = round(input.tdsDeducted ?? 0);
+    if (isNegative(tdsDeducted)) throw new SupplierPaymentError("TDS deducted cannot be negative.");
 
     // A cheque paid from UNWITHDRAWN_CHEQUES is held until the bank clears it (cheques.ts).
     const unwithdrawnChequesId = requireAccount(await loadAccountMap(tx), "UNWITHDRAWN_CHEQUES");
@@ -151,13 +160,14 @@ export async function recordSupplierPayment(
       allocationRows.push({ invoiceId: alloc.invoiceId, amount: amt });
     }
 
-    if (allocatedTotal.greaterThan(amount)) {
+    const settled = add(amount, tdsDeducted);
+    if (allocatedTotal.greaterThan(settled)) {
       throw new SupplierPaymentError(
-        `Allocations (${toAmountString(allocatedTotal)}) exceed the payment amount ` +
-          `(${toAmountString(amount)}).`,
+        `Allocations (${toAmountString(allocatedTotal)}) exceed the payment amount plus TDS deducted ` +
+          `(${toAmountString(settled)}).`,
       );
     }
-    const advance = sub(amount, allocatedTotal);
+    const advance = sub(settled, allocatedTotal);
 
     const company = await requireCompany(tx);
     const paymentNumber = await allocateDocumentNumber(tx, {
@@ -174,6 +184,7 @@ export async function recordSupplierPayment(
         supplierId: input.supplierId,
         paymentDate: input.paymentDate,
         amount,
+        tdsDeducted,
         method: input.method,
         reference: input.reference ?? null,
         paymentAccountId: input.paymentAccountId,
@@ -185,6 +196,7 @@ export async function recordSupplierPayment(
 
     type PostLine = Parameters<typeof postJournalEntry>[0]["lines"][number];
     const lines: PostLine[] = [{ accountId: input.paymentAccountId, credit: amount }];
+    if (gt(tdsDeducted, 0)) lines.push({ accountKey: "TDS_PAYABLE", credit: tdsDeducted });
     if (allocatedTotal.greaterThan(0)) {
       lines.push({
         accountKey: "AP_TRADE",

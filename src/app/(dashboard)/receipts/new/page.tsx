@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { assertCan, can, scopedWhere } from "@/lib/permissions";
+import { requireCompany } from "@/lib/accounting/company";
 import { PageHeader } from "@/components/layout/page-header";
 import { RecordReceiptForm } from "./record-receipt-form";
 
@@ -9,7 +10,8 @@ export default async function NewReceiptPage() {
   assertCan(user.role, "accounting", "write");
 
   const customerScope = can(user.role, "customers", "read");
-  const [customers, bankAccounts] = await Promise.all([
+  const [company, customers, bankAccounts] = await Promise.all([
+    requireCompany(),
     prisma.customer.findMany({
       where: scopedWhere(customerScope, user, "assignedToId", { deletedAt: null }),
       select: { id: true, name: true, customerNumber: true },
@@ -35,7 +37,7 @@ export default async function NewReceiptPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Record Receipt" subtitle="Money received from a customer." />
-      <RecordReceiptForm customers={customers} depositAccounts={bankAccounts} />
+      <RecordReceiptForm customers={customers} depositAccounts={bankAccounts} tdsCaptureEnabled={company.tdsCaptureEnabled} />
     </div>
   );
 }

@@ -24,6 +24,9 @@ import {
   discountReport,
   expenseCategoryReport,
   expenseItemReport,
+  otherIncomeCategoryReport,
+  otherIncomeItemReport,
+  tdsTcsReport,
   accountGroupBalances,
   cashOnHandBalance,
   journalEntryReport,
@@ -33,6 +36,7 @@ import {
 } from "./financial-reports";
 import { saleReport, purchaseReport, allTransactionsReport, itemwiseTransactionReport, salePurchaseByParty } from "./transaction-reports";
 import { loanStatement, loanAccountSummary } from "./loans";
+import { gstr1Report, gstr2Report, gstr3bReport, gstTaxRateReport } from "./gstr-reports";
 import { toAmountString, type MoneyInput } from "./money";
 
 /**
@@ -544,6 +548,40 @@ export const REPORT_REGISTRY: Record<string, ReportDefinition> = {
     load: async ({ from, to }, db) => single("Expense Item Report", (await expenseItemReport(from!, to!, db)).map((r) => ({ Description: r.description, Quantity: n(r.quantity), "Total Value": n(r.totalValue) }))),
   },
 
+  // ---------------------------------------------------------------- Other Income Report (step 6, D8, R11)
+
+  "other-income-category-report": {
+    id: "other-income-category-report",
+    title: "Other Income Category Report",
+    needs: ["range"],
+    load: async ({ from, to }, db) =>
+      single(
+        "Other Income Category Report",
+        (await otherIncomeCategoryReport(from!, to!, db)).map((r) => ({ Code: r.code, Category: r.name, Total: n(r.total), Count: r.count })),
+      ),
+  },
+
+  "other-income-item-report": {
+    id: "other-income-item-report",
+    title: "Other Income Item Report",
+    needs: ["range"],
+    load: async ({ from, to }, db) =>
+      single(
+        "Other Income Item Report",
+        (await otherIncomeItemReport(from!, to!, db)).map((r) => ({ Description: r.description, Quantity: n(r.quantity), "Total Value": n(r.totalValue) })),
+      ),
+  },
+
+  // ---------------------------------------------------------------- TDS/TCS Report (step 6, D9, R17)
+
+  "tds-tcs-report": {
+    id: "tds-tcs-report",
+    title: "TDS/TCS Report",
+    needs: ["asOf"],
+    load: async ({ asOf }, db) =>
+      single("TDS/TCS Report", (await tdsTcsReport(asOf!, db)).map((r) => ({ Code: r.code, Account: r.name, Type: r.type, Balance: n(r.balance) }))),
+  },
+
   // ---------------------------------------------------------------- Cash, Bank & Assets
 
   "cash-bank-assets": {
@@ -582,6 +620,15 @@ export const REPORT_REGISTRY: Record<string, ReportDefinition> = {
     needs: ["asOf"],
     load: async ({ asOf }, db) => single("AP Ageing", (await accountsPayableAgeing(asOf!, db)).map(ageingColumns)),
   },
+
+  // ---------------------------------------------------------------- GST Returns (step 5, R13–R16)
+  // These four return ReportSheet[] directly from gstr-reports.ts — already
+  // in final export shape, not Money-typed rows needing the usual mapping.
+
+  gstr1: { id: "gstr1", title: "GSTR-1", needs: ["range"], load: ({ from, to }, db) => gstr1Report(from!, to!, db) },
+  gstr2: { id: "gstr2", title: "GSTR-2", needs: ["range"], load: ({ from, to }, db) => gstr2Report(from!, to!, db) },
+  gstr3b: { id: "gstr3b", title: "GSTR-3B", needs: ["range"], load: ({ from, to }, db) => gstr3bReport(from!, to!, db) },
+  "gst-tax-rate": { id: "gst-tax-rate", title: "GST Tax Rate Report", needs: [], load: (_params, db) => gstTaxRateReport(db) },
 };
 
 /** The Item Details sheet shape every R1/R2/R3 export shares, lifted from R5's own columns. */

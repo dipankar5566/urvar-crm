@@ -8,12 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createPurchaseInvoice,
   extractInvoiceAction,
   type ExtractedInvoice,
   type ExtractedLine,
 } from "../actions";
+
+const ITC_ELIGIBILITY_OPTIONS = [
+  { value: "INPUTS", label: "Inputs (standard goods)" },
+  { value: "CAPITAL_GOODS", label: "Capital goods" },
+  { value: "INPUT_SERVICES", label: "Input services" },
+  { value: "INELIGIBLE", label: "Ineligible (Sec 17(5) etc.)" },
+] as const;
 
 const inr = (value: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(value);
@@ -31,6 +40,8 @@ export function InvoiceIntake() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, startSaving] = useTransition();
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null);
+  const [itcEligibility, setItcEligibility] = useState<(typeof ITC_ELIGIBILITY_OPTIONS)[number]["value"]>("INPUTS");
+  const [isReverseCharge, setIsReverseCharge] = useState(false);
 
   async function upload(file: File) {
     setIsUploading(true);
@@ -85,6 +96,8 @@ export function InvoiceIntake() {
         totalAmount: invoice.totalAmount,
         lines: invoice.lines,
         fileId: invoice.fileId,
+        itcEligibility,
+        isReverseCharge,
       });
       if ("error" in result) {
         toast.error(result.error);
@@ -202,6 +215,21 @@ export function InvoiceIntake() {
               onChange={(e) => setField("totalAmount", Number(e.target.value))}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label>ITC eligibility</Label>
+            <Select value={itcEligibility} onValueChange={(v) => setItcEligibility((v as typeof itcEligibility) ?? "INPUTS")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ITC_ELIGIBILITY_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2 pt-6">
+            <Checkbox id="isReverseCharge" checked={isReverseCharge} onCheckedChange={(v) => setIsReverseCharge(Boolean(v))} />
+            <Label htmlFor="isReverseCharge" className="text-sm font-normal">Reverse charge applies</Label>
+          </div>
         </CardContent>
       </Card>
 
@@ -223,7 +251,7 @@ export function InvoiceIntake() {
           )}
           {invoice.lines.map((line, index) => (
             <div key={index} className="grid grid-cols-12 gap-2 items-end">
-              <div className="col-span-5 space-y-1.5">
+              <div className="col-span-4 space-y-1.5">
                 <Label className="text-xs">Description</Label>
                 <Input
                   value={line.description}
@@ -231,6 +259,14 @@ export function InvoiceIntake() {
                 />
               </div>
               <div className="col-span-2 space-y-1.5">
+                <Label className="text-xs">HSN</Label>
+                <Input
+                  value={line.hsnCode}
+                  placeholder="Optional"
+                  onChange={(e) => setLine(index, { hsnCode: e.target.value })}
+                />
+              </div>
+              <div className="col-span-1 space-y-1.5">
                 <Label className="text-xs">Qty</Label>
                 <Input
                   type="number"
@@ -270,7 +306,8 @@ export function InvoiceIntake() {
           ))}
           <p className="text-xs text-muted-foreground">
             Lines are recorded as written on the invoice. Matching them to catalogue products
-            isn&apos;t required — a supplier lists what they sell, not what we do.
+            isn&apos;t required — a supplier lists what they sell, not what we do. HSN is optional —
+            fill it in on every line to get per-line GST at posting instead of the blended header split.
           </p>
         </CardContent>
       </Card>

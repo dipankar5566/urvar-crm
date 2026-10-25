@@ -19,6 +19,13 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
   DRAFT: "secondary", POSTED: "default", PARTIALLY_PAID: "outline", PAID: "default", CANCELLED: "outline",
 };
 
+const ITC_LABELS: Record<string, string> = {
+  INPUTS: "Inputs",
+  CAPITAL_GOODS: "Capital goods",
+  INPUT_SERVICES: "Input services",
+  INELIGIBLE: "Ineligible",
+};
+
 export default async function PurchaseInvoiceDetailPage({
   params,
 }: {
@@ -83,22 +90,32 @@ export default async function PurchaseInvoiceDetailPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>Item</TableHead>
+                  <TableHead>HSN</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
                   <TableHead className="text-right">Rate</TableHead>
+                  <TableHead className="text-right">Tax</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {invoice.items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{item.description}</TableCell>
-                    <TableCell className="text-right tabular-nums">{Number(item.quantity)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatInr(item.unitPrice)}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
-                      {formatInr(item.lineTotal)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {invoice.items.map((item) => {
+                  const lineTax =
+                    Number(item.cgstAmount ?? 0) + Number(item.sgstAmount ?? 0) + Number(item.igstAmount ?? 0) + Number(item.cessAmount ?? 0);
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell>{item.description}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{item.hsnCode ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{Number(item.quantity)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatInr(item.unitPrice)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-xs text-muted-foreground">
+                        {item.taxRatePercent !== null ? `${formatInr(lineTax)} (${Number(item.taxRatePercent)}%)` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-medium">
+                        {formatInr(item.lineTotal)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -114,8 +131,13 @@ export default async function PurchaseInvoiceDetailPage({
                 {Number(invoice.cgstAmount) > 0 && <Row label="CGST" value={formatInr(invoice.cgstAmount)} />}
                 {Number(invoice.sgstAmount) > 0 && <Row label="SGST" value={formatInr(invoice.sgstAmount)} />}
                 {Number(invoice.igstAmount) > 0 && <Row label="IGST" value={formatInr(invoice.igstAmount)} />}
+                {Number(invoice.cessAmount) > 0 && <Row label="Cess" value={formatInr(invoice.cessAmount)} />}
+                {invoice.supplierGstin && <Row label="Supplier GSTIN" value={invoice.supplierGstin} />}
+                {invoice.placeOfSupply && <Row label="Place of supply" value={invoice.placeOfSupply} />}
               </>
             )}
+            <Row label="ITC eligibility" value={ITC_LABELS[invoice.itcEligibility]} />
+            {invoice.isReverseCharge && <Row label="Reverse charge" value="Applies" />}
             <div className="border-t pt-2">
               <Row label="Total" value={formatInr(invoice.totalAmount)} strong />
             </div>

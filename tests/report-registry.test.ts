@@ -39,9 +39,9 @@ describe("vyaparFilename()", () => {
 });
 
 describe("REPORT_REGISTRY — every entry is registered with a consistent shape", () => {
-  it("has 32 reports, each with a non-empty title and at least one need declared or none", () => {
+  it("has 36 reports, each with a non-empty title and at least one need declared or none", () => {
     const ids = Object.keys(REPORT_REGISTRY);
-    expect(ids.length).toBe(32);
+    expect(ids.length).toBe(39);
     for (const id of ids) {
       const entry = REPORT_REGISTRY[id];
       expect(entry.id).toBe(id);

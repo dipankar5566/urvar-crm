@@ -39,6 +39,11 @@ export type ExtractedLine = {
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  /// Vyapar parity step 5 (G14). Never extracted by OCR — entered by hand on
+  /// review, same as every other field here. Empty means "line tax
+  /// unavailable" at posting (purchase-posting.ts falls back to the header
+  /// blended split for the whole invoice when even one line has none).
+  hsnCode: string;
 };
 
 export type ExtractedInvoice = {
@@ -89,6 +94,7 @@ function parseLines(value: unknown): ExtractedLine[] {
         quantity: money(row.quantity),
         unitPrice: money(row.unitPrice),
         lineTotal: money(row.lineTotal),
+        hsnCode: "",
       };
     })
     .filter((line) => line.description !== "");
@@ -164,6 +170,10 @@ export type SaveInvoiceInput = {
   totalAmount: number;
   lines: ExtractedLine[];
   fileId?: string;
+  /// Vyapar parity step 5 (G14), both header-level per VYAPAR_PARITY_SPEC.md
+  /// §2.5. Defaults match the common case: standard trading goods, forward charge.
+  itcEligibility?: "INPUTS" | "CAPITAL_GOODS" | "INPUT_SERVICES" | "INELIGIBLE";
+  isReverseCharge?: boolean;
 };
 
 /** Next code in the SUP-0001 sequence, matching the leadNumber convention. */
@@ -223,6 +233,8 @@ export async function createPurchaseInvoice(
         subtotal: input.subtotal,
         taxAmount: input.taxAmount,
         totalAmount: input.totalAmount,
+        itcEligibility: input.itcEligibility ?? "INPUTS",
+        isReverseCharge: input.isReverseCharge ?? false,
         createdById: user.id,
         items: {
           create: lines.map((line) => ({
@@ -230,6 +242,7 @@ export async function createPurchaseInvoice(
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             lineTotal: line.lineTotal,
+            hsnCode: line.hsnCode?.trim() || null,
           })),
         },
       },

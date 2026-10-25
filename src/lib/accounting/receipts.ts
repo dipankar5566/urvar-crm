@@ -5,7 +5,7 @@ import { postJournalEntry, reverseJournalEntry } from "./posting";
 import { requireCompany } from "./company";
 import { financialYearOf } from "./fiscal";
 import { allocateDocumentNumber, DOCUMENT_TYPES } from "./numbering";
-import { add, gt, money, round, sub, sum, toAmountString, type Money } from "./money";
+import { add, gt, isNegative, money, round, sub, sum, toAmountString, type Money } from "./money";
 import { logAudit } from "@/lib/audit";
 import { syncCustomerOutstanding } from "./receivables";
 import { loadAccountMap, requireAccount } from "./account-map";
@@ -44,6 +44,14 @@ export type RecordReceiptInput = {
   allocations?: AllocationInput[];
   notes?: string | null;
   createdById: string;
+  /**
+   * Vyapar parity step 6 (D9, R17). What the customer withheld under
+   * Section 194Q etc. before paying — recoverable (`TDS_RECEIVABLE`), so it
+   * settles an allocation exactly like cash does: `amount + tdsDeducted` is
+   * the real cap on `allocations`, not `amount` alone. Omit or 0 (every
+   * caller before this shipped) and nothing here changes.
+   */
+  tdsDeducted?: string | number;
 };
 
 export type RecordReceiptResult = {
@@ -143,6 +151,8 @@ export async function recordReceipt(
 
     const amount = round(input.amount);
     if (!gt(amount, 0)) throw new ReceiptError("Receipt amount must be greater than zero.");
+    const tdsDeducted = round(input.tdsDeducted ?? 0);
+    if (isNegative(tdsDeducted)) throw new ReceiptError("TDS deducted cannot be negative.");
 
     // postJournalEntry only checks that an account is active and postable, not
     // what kind it is — without this, a crafted depositAccountId could post a
@@ -196,13 +206,16 @@ export async function recordReceipt(
       allocationRows.push({ invoiceId: alloc.invoiceId, amount: amt });
     }
 
-    if (allocatedTotal.greaterThan(amount)) {
+    // TDS withheld settles an allocation exactly like cash does — the real
+    // cap is amount + tdsDeducted, not amount alone.
+    const settled = add(amount, tdsDeducted);
+    if (allocatedTotal.greaterThan(settled)) {
       throw new ReceiptError(
-        `Allocations (${toAmountString(allocatedTotal)}) exceed the receipt amount ` +
-          `(${toAmountString(amount)}).`,
+        `Allocations (${toAmountString(allocatedTotal)}) exceed the receipt amount plus TDS deducted ` +
+          `(${toAmountString(settled)}).`,
       );
     }
-    const advance = sub(amount, allocatedTotal);
+    const advance = sub(settled, allocatedTotal);
 
     const company = await requireCompany(tx);
     const receiptNumber = await allocateDocumentNumber(tx, {
@@ -219,6 +232,7 @@ export async function recordReceipt(
         customerId: input.customerId,
         receiptDate: input.receiptDate,
         amount,
+        tdsDeducted,
         method: input.method,
         reference: input.reference ?? null,
         depositAccountId: input.depositAccountId,
@@ -230,6 +244,7 @@ export async function recordReceipt(
 
     type PostLine = Parameters<typeof postJournalEntry>[0]["lines"][number];
     const lines: PostLine[] = [{ accountId: input.depositAccountId, debit: amount }];
+    if (gt(tdsDeducted, 0)) lines.push({ accountKey: "TDS_RECEIVABLE", debit: tdsDeducted });
     if (allocatedTotal.greaterThan(0)) {
       lines.push({
         accountKey: "AR_TRADE",

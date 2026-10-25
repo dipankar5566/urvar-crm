@@ -22,9 +22,11 @@ const METHODS = ["CASH", "BANK_TRANSFER", "UPI", "CHEQUE", "CARD", "OTHER"] as c
 export function RecordSupplierPaymentForm({
   suppliers,
   paymentAccounts,
+  tdsCaptureEnabled,
 }: {
   suppliers: SupplierOption[];
   paymentAccounts: AccountOption[];
+  tdsCaptureEnabled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -33,6 +35,7 @@ export function RecordSupplierPaymentForm({
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<(typeof METHODS)[number]>("BANK_TRANSFER");
   const [reference, setReference] = useState("");
+  const [tdsDeducted, setTdsDeducted] = useState("");
   const [paymentAccountId, setPaymentAccountId] = useState(paymentAccounts[0]?.id ?? "");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [openInvoices, setOpenInvoices] = useState<OpenInvoice[]>([]);
@@ -68,7 +71,8 @@ export function RecordSupplierPaymentForm({
     () => Object.values(allocations).reduce((sum, v) => sum + (Number(v) || 0), 0),
     [allocations],
   );
-  const advance = Math.max(0, (Number(amount) || 0) - allocatedTotal);
+  const tdsNum = tdsCaptureEnabled ? Number(tdsDeducted) || 0 : 0;
+  const advance = Math.max(0, (Number(amount) || 0) + tdsNum - allocatedTotal);
 
   async function submit() {
     if (!supplierId) return toast.error("Select a supplier.");
@@ -88,6 +92,7 @@ export function RecordSupplierPaymentForm({
         reference: reference || undefined,
         paymentAccountId,
         allocations: allocationInputs,
+        tdsDeducted: tdsNum > 0 ? tdsNum : undefined,
       });
       if ("error" in result) {
         toast.error(result.error);
@@ -158,6 +163,15 @@ export function RecordSupplierPaymentForm({
             <Label htmlFor="reference">Reference (UTR / cheque no. / UPI ref)</Label>
             <Input id="reference" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
+          {tdsCaptureEnabled && (
+            <div className="space-y-2">
+              <Label htmlFor="tdsDeducted">TDS deducted from supplier (₹)</Label>
+              <Input
+                id="tdsDeducted" type="number" min="0" step="0.01" placeholder="0.00"
+                value={tdsDeducted} onChange={(e) => setTdsDeducted(e.target.value)}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 

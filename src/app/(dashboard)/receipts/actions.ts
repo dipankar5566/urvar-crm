@@ -23,6 +23,8 @@ const recordReceiptSchema = z.object({
   depositAccountId: z.string().min(1, "Select where this was deposited"),
   allocations: z.array(allocationSchema).optional(),
   notes: z.string().optional(),
+  /** Only ever non-zero when Company.tdsCaptureEnabled gated the form field that sets it. */
+  tdsDeducted: z.coerce.number().min(0).optional(),
 });
 export type RecordReceiptFormInput = z.infer<typeof recordReceiptSchema>;
 
@@ -50,6 +52,7 @@ export async function recordReceiptAction(input: RecordReceiptFormInput): Promis
       depositAccountId: data.depositAccountId,
       allocations: data.allocations,
       notes: data.notes || null,
+      tdsDeducted: data.tdsDeducted,
       createdById: user.id,
     });
 

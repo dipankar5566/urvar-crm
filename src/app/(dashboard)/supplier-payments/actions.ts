@@ -23,6 +23,8 @@ const recordPaymentSchema = z.object({
   paymentAccountId: z.string().min(1, "Select where this was paid from"),
   allocations: z.array(allocationSchema).optional(),
   notes: z.string().optional(),
+  /** Only ever non-zero when Company.tdsCaptureEnabled gated the form field that sets it. */
+  tdsDeducted: z.coerce.number().min(0).optional(),
 });
 export type RecordSupplierPaymentFormInput = z.infer<typeof recordPaymentSchema>;
 
@@ -49,6 +51,7 @@ export async function recordSupplierPaymentAction(
       paymentAccountId: data.paymentAccountId,
       allocations: data.allocations,
       notes: data.notes || null,
+      tdsDeducted: data.tdsDeducted,
       createdById: user.id,
     });
 

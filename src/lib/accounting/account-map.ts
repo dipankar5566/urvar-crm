@@ -69,6 +69,12 @@ export const ACCOUNT_KEYS = [
   // Vyapar parity step 3 — loan fee/charges (5720 / 5730).
   "LOAN_PROCESSING_FEE",
   "LOAN_CHARGES",
+
+  // Vyapar parity step 6 — TDS/TCS (D9, R17): 2140/2141/1145/1146.
+  "TDS_PAYABLE",
+  "TCS_PAYABLE",
+  "TDS_RECEIVABLE",
+  "TCS_RECEIVABLE",
 ] as const;
 
 export type AccountKey = (typeof ACCOUNT_KEYS)[number];

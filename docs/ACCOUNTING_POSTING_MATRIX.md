@@ -254,3 +254,53 @@ Rules:
 - `outstandingPrincipal()` sums every non-cancelled `TOP_UP` into the balance alongside the original `principal`, so it still equals the loan account's own ledger balance to the paisa.
 - A fee/charge is refused once the loan is CANCELLED; a top-up additionally requires the loan to still be ACTIVE (not CLOSED either).
 - `allTransactionsReport()` (R3) shows a fee/charge as `paid`, a top-up as `received` — the same direction as a Payment-Out/loan-disbursement row.
+
+## Vyapar parity: purchase GST data, two posting paths (2026-10-26)
+
+Source: `docs/VYAPAR_PARITY_SPEC.md` §2.5, G14. Implemented in `src/lib/accounting/purchase-posting.ts`. `postPurchaseInvoice()` picks the path per invoice, never a mix within one:
+
+| Path | Condition | Subtotal / Tax / Total posted | Per-line fields written |
+|---|---|---|---|
+| Line-priced | Every `PurchaseInvoiceItem.hsnCode` is set | Summed from each line's `priceLine()` result — **overrides** whatever was entered at intake | `taxRatePercent`, `taxableValue`, `cgstAmount`, `sgstAmount`, `igstAmount`, `cessAmount` on each item |
+| Header-blended (original, unchanged) | Any line is missing `hsnCode` | Exactly as entered at intake — unchanged from before this step | None — stays null, "line tax unavailable" |
+
+| Event | Dr | Cr | sourceType | Idempotency key |
+|---|---|---|---|---|
+| Supplier bill, line-priced | `PURCHASES` (summed taxable) + `GST_INPUT_CGST`/`SGST`/`IGST`/`CESS` (summed per line) | `AP_TRADE` | SUPPLIER_BILL | `PURCHASE_INVOICE:<id>:1` |
+| Supplier bill, header-blended | `PURCHASES` (header subtotal) + `GST_INPUT_CGST`/`SGST`/`IGST` split from the one header `taxAmount` | `AP_TRADE` | SUPPLIER_BILL | same |
+
+Rules:
+- `supplierGstin`/`placeOfSupply` are frozen onto the invoice at posting from `Supplier.gstNumber`/`Supplier.state` — the same moment `isInterState` is decided, mirroring `SalesInvoice.customerGstin`'s own convention.
+- A line-priced invoice resolves each line's rate via `resolveTaxRate(hsnCode, invoiceDate)` — the same "never invent a rate" rule the sales side enforces. A missing verified `TaxRate` row refuses the whole posting (`PurchasePostingError`), not just that line.
+- `itcEligibility`/`isReverseCharge` are set at intake (`createPurchaseInvoice`), not at posting — they're facts about the transaction known up front, unlike the supplier-state-dependent fields above.
+- The ledger posting itself does not vary by `itcEligibility` or `isReverseCharge` yet — every purchase's GST still posts in full to `GST_INPUT_*`. GSTR-3B (R15) computes the ITC-available/ineligible/reverse-charge split from `PurchaseInvoice` fields directly, not from the ledger, for exactly this reason.
+
+## Vyapar parity: Other Income, and TDS on receipts/payments (2026-10-26)
+
+Source: `docs/VYAPAR_PARITY_SPEC.md` §5 D8/D9, §3.2 R11, §3.3 R17. Implemented in `src/lib/accounting/other-income.ts` (new) and additively in `receipts.ts`/`supplier-payments.ts`.
+
+**Other Income** — the Dr/Cr mirror of `Expense`'s posting, approved in `approveOtherIncome()`:
+
+| Event | Dr | Cr | sourceType | Idempotency key |
+|---|---|---|---|---|
+| Other income approved, flat amount or itemised w/o GST | `depositAccountId` (full amount) | `categoryAccountId` (subtotal) | OTHER_INCOME | `OTHER_INCOME:<id>:1` |
+| Other income approved, GST applicable | `depositAccountId` (full amount) | `categoryAccountId` (subtotal) + `GST_OUTPUT_CGST`/`SGST`/`IGST` (always output tax — no ITC-claim equivalent) | OTHER_INCOME | same |
+| Round-off (either case) | if rounded down: `ROUND_OFF` (the shortfall) | if rounded up: `ROUND_OFF` (the excess) | — | — |
+| Cancel (reverse) | `reverseJournalEntry()` on `postedEntryId` — a linked mirror entry, original untouched | OTHER_INCOME | — |
+
+Rules:
+- `categoryAccountId` must resolve to a postable `INCOME`-typed `LedgerAccount` (`approveExpense`'s own "not a grouping account"/"not an expense account" checks, mirrored for INCOME).
+- Round-off sign is the mirror image of `expenses.ts`: rounding the total **up** credits `ROUND_OFF` (more came in than the lines summed to); rounding **down** debits it. `expenses.ts` does the opposite because money is flowing the other way.
+- Self-approval follows the same `canSelfApprove(role)` exemption as every other approve-and-post document (`SUPER_ADMIN` only, today).
+
+**TDS on receipts/payments** — additive to the existing postings in `receipts.ts`/`supplier-payments.ts`, not a new document type:
+
+| Event | Dr | Cr | Notes |
+|---|---|---|---|
+| Receipt with `tdsDeducted > 0` | `depositAccountId` (cash actually received) + `TDS_RECEIVABLE` (1145, the withheld amount) | `AR_TRADE` (allocated) + `ADVANCE_FROM_CUSTOMER` (unallocated) | `tdsDeducted` extends the allocation cap to `amount + tdsDeducted` — it settles an invoice exactly like cash does |
+| Supplier payment with `tdsDeducted > 0` | `AP_TRADE` (allocated) + `ADVANCE_TO_SUPPLIER` (unallocated) | `paymentAccountId` (cash actually paid) + `TDS_PAYABLE` (2140, the withheld amount) | Same cap-extension rule, Dr/Cr reversed |
+
+Rules:
+- `tdsDeducted` defaults to 0 on both `Receipt` and `SupplierPayment` — every pre-existing call site is unaffected; the full pre-step-6 test suite (354 tests) passed unmodified before any TDS test was added.
+- Gated by `Company.tdsCaptureEnabled` (default `false`) — **a UI gate only**. Neither `recordReceipt()` nor `recordSupplierPayment()` checks the flag; a caller that passes `tdsDeducted` gets it posted regardless. The flag only controls whether the "new receipt"/"new supplier payment" forms show the field.
+- TCS (`TCS_RECEIVABLE` 1146, `TCS_PAYABLE` 2141) exists as chart-of-accounts stubs only — nothing in this codebase posts to them. `tdsTcsReport()` reports all four accounts' balances regardless, so TCS simply shows zero until a future change adds a collection point on the sales side.

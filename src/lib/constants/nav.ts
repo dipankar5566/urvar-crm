@@ -62,6 +62,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Purchases", href: "/purchases", icon: "Receipt", module: "purchases", section: "admin" },
   { label: "Supplier Payments", href: "/supplier-payments", icon: "Landmark", module: "purchases", section: "admin" },
   { label: "Expenses", href: "/expenses", icon: "ReceiptText", module: "expenses", section: "admin" },
+  { label: "Other Income", href: "/other-income", icon: "PiggyBank", module: "otherIncome", section: "admin" },
   { label: "Reports", href: "/reports", icon: "BarChart3", module: "reports", section: "admin" },
   { label: "Users", href: "/users", icon: "Users", module: "users", section: "admin" },
   { label: "Audit Logs", href: "/audit-logs", icon: "ScrollText", module: "audit", section: "admin" },

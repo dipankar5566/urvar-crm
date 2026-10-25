@@ -46,6 +46,11 @@ const SECTIONS: ReportSection[] = [
     reports: [
       { href: "/accounting/reports/gst", title: "GST Registers", description: "Output tax vs. input credit, and outward-supply detail — GSTR-1/3B-style, for return preparation." },
       { href: "/accounting/reports/hsn-summary", title: "Sale Summary By HSN", description: "Outward supply detail aggregated by HSN code." },
+      { href: "/accounting/reports/gstr1", title: "GSTR-1", description: "Outward supply return in GST-portal sheet format. For review, not for filing." },
+      { href: "/accounting/reports/gstr2", title: "GSTR-2", description: "Inward supply return — only purchases with a per-line HSN contribute. For review, not for filing." },
+      { href: "/accounting/reports/gstr3b", title: "GSTR-3B", description: "Summary return — outward tax, reverse charge, and ITC available/ineligible. For review, not for filing." },
+      { href: "/accounting/reports/gst-tax-rate", title: "GST Tax Rate Report", description: "Every HSN rate on file, and whether an accountant has verified it." },
+      { href: "/accounting/reports/tds-tcs-report", title: "TDS/TCS Report", description: "Balances of TDS/TCS Receivable and Payable as of a date. For review, not a Form 26Q/27EQ filing." },
     ],
   },
   {
@@ -68,6 +73,13 @@ const SECTIONS: ReportSection[] = [
     reports: [
       { href: "/accounting/reports/expense-category-report", title: "Expense Category Report", description: "Approved expenses by category account." },
       { href: "/accounting/reports/expense-item-report", title: "Expense Item Report", description: "Approved expenses' itemised lines, by description." },
+    ],
+  },
+  {
+    title: "Other Income Report",
+    reports: [
+      { href: "/accounting/reports/other-income-category-report", title: "Other Income Category Report", description: "Approved other income by category account." },
+      { href: "/accounting/reports/other-income-item-report", title: "Other Income Item Report", description: "Approved other income's itemised lines, by description." },
     ],
   },
   {

@@ -23,9 +23,11 @@ const METHODS = ["CASH", "BANK_TRANSFER", "UPI", "CHEQUE", "CARD", "OTHER"] as c
 export function RecordReceiptForm({
   customers,
   depositAccounts,
+  tdsCaptureEnabled,
 }: {
   customers: CustomerOption[];
   depositAccounts: AccountOption[];
+  tdsCaptureEnabled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -34,6 +36,7 @@ export function RecordReceiptForm({
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<(typeof METHODS)[number]>("BANK_TRANSFER");
   const [reference, setReference] = useState("");
+  const [tdsDeducted, setTdsDeducted] = useState("");
   const [depositAccountId, setDepositAccountId] = useState(depositAccounts[0]?.id ?? "");
   const [receiptDate, setReceiptDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [openInvoices, setOpenInvoices] = useState<OpenInvoice[]>([]);
@@ -94,8 +97,10 @@ export function RecordReceiptForm({
   const allocatedTotal = allocatedPaise / 100;
   const effectiveAmount = amountTouched ? amount : allocatedTotal > 0 ? allocatedTotal.toFixed(2) : "";
   const amountNum = Number(effectiveAmount) || 0;
-  const advance = Math.max(0, toPaise(amountNum) - allocatedPaise) / 100;
-  const overAllocated = allocatedPaise > toPaise(amountNum);
+  const tdsNum = tdsCaptureEnabled ? Number(tdsDeducted) || 0 : 0;
+  const settledPaise = toPaise(amountNum) + toPaise(tdsNum);
+  const advance = Math.max(0, settledPaise - allocatedPaise) / 100;
+  const overAllocated = allocatedPaise > settledPaise;
 
   // Base UI's <SelectValue> can only resolve a label for items that are
   // mounted, and the list is unmounted while the dropdown is closed — so
@@ -136,7 +141,9 @@ export function RecordReceiptForm({
     if (!depositAccountId) return toast.error("Select where this was deposited.");
     if (overAllocated) {
       return toast.error(
-        `Allocated ${inr(allocatedTotal)} is more than the amount received, ${inr(amountNum)}.`,
+        tdsNum > 0
+          ? `Allocated ${inr(allocatedTotal)} is more than the amount received plus TDS deducted, ${inr(amountNum + tdsNum)}.`
+          : `Allocated ${inr(allocatedTotal)} is more than the amount received, ${inr(amountNum)}.`,
       );
     }
     const overInvoice = invoices.find(
@@ -161,6 +168,7 @@ export function RecordReceiptForm({
         reference: reference || undefined,
         depositAccountId,
         allocations: allocationInputs,
+        tdsDeducted: tdsNum > 0 ? tdsNum : undefined,
       });
       if ("error" in result) {
         toast.error(result.error);
@@ -239,6 +247,15 @@ export function RecordReceiptForm({
             <Label htmlFor="reference">Reference (UTR / cheque no. / UPI ref)</Label>
             <Input id="reference" value={reference} onChange={(e) => setReference(e.target.value)} />
           </div>
+          {tdsCaptureEnabled && (
+            <div className="space-y-2">
+              <Label htmlFor="tdsDeducted">TDS deducted by customer (₹)</Label>
+              <Input
+                id="tdsDeducted" type="number" min="0" step="0.01" placeholder="0.00"
+                value={tdsDeducted} onChange={(e) => setTdsDeducted(e.target.value)}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
