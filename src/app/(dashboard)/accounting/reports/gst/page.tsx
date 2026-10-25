@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter,
 } from "@/components/ui/table";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,7 @@ export default async function GstReportsPage({
           Update
         </button>
       </form>
+      <ExportLinks report="gst" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
 
       <Card>
         <CardContent className="p-0">

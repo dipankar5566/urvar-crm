@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,10 @@ export default async function AllTransactionsPage({
         title="All Transactions Report"
         subtitle="Every sale, purchase, payment, expense and loan event in this range. Pure cash/bank housekeeping (deposits, transfers, adjustments) is on the Day Book instead, matching Vyapar's own split."
       />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+        <ExportLinks report="all-transactions" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">

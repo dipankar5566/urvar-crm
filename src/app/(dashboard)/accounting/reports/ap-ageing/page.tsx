@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter,
 } from "@/components/ui/table";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,7 @@ export default async function ApAgeingPage({
           Update
         </button>
       </form>
+      <ExportLinks report="ap-ageing" params={{ asOf: asOfDate.toISOString().slice(0, 10) }} />
 
       <Card>
         <CardContent className="p-0">

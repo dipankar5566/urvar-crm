@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +77,7 @@ export default async function GeneralLedgerPage({
           Update
         </button>
       </form>
+      {accountId && <ExportLinks report="ledger" params={{ accountId, from: isoDate(fromDate), to: isoDate(toDate) }} />}
 
       {result && (
         <Card>

@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,10 @@ export default async function ItemwiseTransactionPage({
         title="Itemwise Transaction Report"
         subtitle="Every sale, purchase and expense line in this range — Vyapar's Item Details sheet, as its own report. Purchase lines show no HSN or tax yet (purchase invoices don't carry per-line tax)."
       />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+        <ExportLinks report="itemwise-transaction" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">

@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AsOfFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,10 @@ export default async function LoanAccountSummaryPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Loan Account Summary" subtitle="Every loan as of a date: lender, opening principal, principal and interest paid, and balance." />
-      <AsOfFilterForm asOf={asOf ?? isoDate(asOfDate)} />
+      <div className="flex items-center justify-between">
+        <AsOfFilterForm asOf={asOf ?? isoDate(asOfDate)} />
+        <ExportLinks report="loan-account-summary" params={{ asOf: isoDate(asOfDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0">

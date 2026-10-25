@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,10 @@ export default async function PurchaseReportPage({
   return (
     <div className="space-y-6">
       <PageHeader title="Purchase Report" subtitle="Every posted purchase invoice in this range, with how much has been paid." />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+        <ExportLinks report="purchase-report" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">

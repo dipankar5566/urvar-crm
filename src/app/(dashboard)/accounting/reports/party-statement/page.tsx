@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,10 @@ export default async function PartyStatementPage({
         title={`Statement — ${result.partyName}`}
         subtitle={partyType === "CUSTOMER" ? "What this customer owes us." : "What we owe this supplier."}
       />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} hidden={{ partyType, partyId }} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} hidden={{ partyType, partyId }} />
+        <ExportLinks report="party-statement" params={{ partyId, partyType, from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0">

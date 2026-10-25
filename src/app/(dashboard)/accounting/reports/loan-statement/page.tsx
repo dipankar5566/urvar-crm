@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,10 @@ export default async function LoanStatementPage({
   return (
     <div className="space-y-6">
       <PageHeader title={`Loan Statement — ${result.lenderName}`} subtitle="A fee/charge row leaves the balance unchanged; a disbursement, top-up or EMI moves it." />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} hidden={{ loanId }} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} hidden={{ loanId }} />
+        <ExportLinks report="loan-statement" params={{ loanId, from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0">

@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DateRangeFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,10 @@ export default async function SalePurchaseByPartyPage({
         title="Sale/Purchase by Party"
         subtitle="Sale and purchase totals per party in this range. Customer and Supplier are separate tables here, unlike Vyapar's single party model, so a row is always all-sale or all-purchase. By Party Group is not yet built."
       />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+        <ExportLinks report="sale-purchase-by-party" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0">

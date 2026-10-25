@@ -36,7 +36,7 @@ Evidence labels used below: **[R]** observed at runtime, **[X]** read from an ex
 | G10 | Party balance sign | A customer in credit (advance) appears under **Sundry Creditors**, a supplier with a debit balance under **Sundry Debtors** [X] | Check `balanceSheet` / `allPartiesSummary` | **Verify and match** in R5/R9 |
 | G11 | Bank reconciliation | Decoded `BANK_RECONCILIATION_*` / bank-linking constants [S]; **no reconcile UI** on the test company | None | **Urvar-designed statement import + match** (§4) |
 | G12 | Reports | Approx. 100 report titles decoded; 17 exported | 25 report functions | **New reports in §3** |
-| G13 | Export | Every report exports to Excel (main sheet + "Item Details" sheet) and prints [X] | Financial reports: no export | **Export registry** (§3.4) |
+| G13 | Export | Every report exports to Excel (main sheet + "Item Details" sheet) and prints [X] | ✅ (2026-10-26) `report-registry.ts` — all 32 reports, XLSX + PDF | — |
 | G14 | GST data | HSN on item; per-line tax id; supplier GSTIN on party [R] | Purchase lines have no HSN or per-line tax; no supplier GSTIN on invoice | **Schema additions** (§2.5) |
 | G15 | Stock | Perpetual quantity on item [R] | Periodic valuation (deliberate); stock in ERP DB | Stock reports **later phase** |
 
@@ -144,7 +144,7 @@ Columns come from the exported Vyapar workbooks [X]. Every report takes a date r
 - **R17 TCS/TDS** payable and receivable, and **Form 27EQ.** These need TCS capture on sales and TDS on payments. Urvar has `TDS Payable` (2140) but no TCS accounts; add TCS Payable/Receivable and TDS Receivable, matching Vyapar's default `other_accounts` [R].
 - GSTR-4/9/9A, VAT 201 and Drug Schedule are **out of scope**.
 
-### 3.4 Export (G13)
+### 3.4 Export (G13) ✅ shipped 2026-10-26 — see the step-4 amendment below
 
 - **Generalise `src/app/api/reports/export`** into a registry: report id → `{ load(params), columns, itemDetails? }`.
 - **Formats:**
@@ -222,7 +222,7 @@ Expected figures (from Vyapar's own exports [X]):
 1. G1 bank accounts, G2/G3 adjustments, G5 cheques (with R6 and R7).
 2. ✅ R1–R5 transaction reports; R8 Day Book check (2026-10-25 — see the amendment below).
 3. ✅ G7 loans, R9/R10; R12 journal report (2026-10-25 — see the amendment below).
-4. §3.4 export registry (retrofit all existing and new reports).
+4. ✅ §3.4 export registry, retrofitted onto all existing and new reports (2026-10-26 — see the amendment below).
 5. G14 purchase GST data, then R13–R16 (GSTR-1/2/3B, SAC, tax rate).
 6. R17 TCS/TDS (after D9); R11 other income (after D8).
 7. §4 bank reconciliation; §3.5 Close Books and Custom Report.
@@ -265,3 +265,17 @@ REA round 7 showed that Vyapar has only **open** and **transferred** (deposited/
 **UI:** the loan detail page (`/accounting/loans/[loanId]`) gained a fee/charge form, a top-up form, a combined history table with cancel, and a "Statement" link to R9; the Reports index gained Loan Statement, Loan Account Summary and Journal Entry Report under Transaction Report.
 
 9 new tests (`tests/loans.test.ts`) plus 3 new `tests/vyapar-parity.test.ts` describe blocks (R9, R10, R12) — 325 total passing, `tsc --noEmit` and `eslint` clean.
+
+## Amendment 2026-10-26 (step 4): the export registry (G13), shipped for all 32 reports
+
+**Shipped:** `src/lib/accounting/report-registry.ts` (`REPORT_REGISTRY`, `vyaparFilename()`), `src/lib/pdf/report-pdf.tsx` (one shared tabular PDF template), `src/app/api/accounting/reports/export/route.ts`, `src/components/accounting/export-links.tsx`, and `tests/report-registry.test.ts`. Every one of the 32 accounting report pages (all of §3.1/§3.2's R1–R12 plus the 20 pre-existing Phase 5/7/8 reports) now has an "Export Excel" / "Export PDF" link next to its date filter.
+
+**One deliberate simplification of the spec's recipe.** §3.4 asks for "report id -> `{ load(params), columns, itemDetails? }`". This implementation drops the separate `columns` field: a sheet's columns are always `Object.keys(rows[0])`, the same thing the pre-existing CRM export route (`/api/reports/export`, leads/orders/quotations) already did — there is no reason to hand-list column headers a second time next to code that already names every field in the row object it builds. `itemDetails` likewise becomes "a second `ReportSheet`" rather than a special case: R1/R2/R3 just return two sheets (`[main, "Item Details"]`) instead of one; R9's summary rows and `gst`'s two-report combination (tax summary + outward register) use the same mechanism.
+
+**Permission check**: the new route checks `can(user.role, "accounting", "read")`, matching every report page's own `assertCan`, and is deliberately a separate route from `/api/reports/export` (CRM, gated on the `reports` module) rather than a shared one with a branch for "which permission to check."
+
+**Filename convention**: `vyaparFilename()` reproduces Vyapar's own pattern exactly — `SaleReport_01_10_26_to_31_10_26.xlsx` for a range, `TrialBalance_25_10_26.xlsx` for an as-of date — confirmed against the oracle filenames already sitting in `vyapar/rea-test-reports/`.
+
+**PDF scope**: one shared landscape, auto-width table template renders whichever sheet would be sheet 1 of the XLSX. A report with an Item Details second sheet (R1/R2/R3) prints only the first — multi-sheet output is what a spreadsheet is for, and building 30+ bespoke PDF layouts to match Vyapar's own print formats isn't proportionate to what this project needs from PDF export.
+
+**Verification**: every registered report's `load()` was run against the dev DB via a throwaway script (deleted afterward) before writing permanent tests — all 32 resolved without error, and `renderReportPdf()` was confirmed to produce a real PDF (`%PDF` header) in isolation. `tests/report-registry.test.ts` then locked in the parts worth asserting: the filename convention, row-flattening into plain numbers/strings for day-book/sale-report/ar-ageing/loan-statement/party-statement/ledger/gst/cash-bank-assets, and a blanket "every range/asOf-only report still loads" sweep. 338 tests pass total, `tsc --noEmit` and `eslint` clean across the repo.

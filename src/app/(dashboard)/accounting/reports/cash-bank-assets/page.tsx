@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableRow, TableFooter } from "@/components/ui/table";
 import { AsOfFilterForm, isoDate } from "../date-filter-form";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +65,10 @@ export default async function CashBankAssetsPage({
         title="Cash, Bank & Assets"
         subtitle="Cash on Hand, Bank Accounts, Fixed Assets and Loan Accounts as of a date. Fixed Assets and Loans already exist in the chart of accounts (1200, 2200) — no new setup was needed for this report."
       />
-      <AsOfFilterForm asOf={asOf ?? isoDate(asOfDate)} />
+      <div className="flex items-center justify-between">
+        <AsOfFilterForm asOf={asOf ?? isoDate(asOfDate)} />
+        <ExportLinks report="cash-bank-assets" params={{ asOf: isoDate(asOfDate) }} />
+      </div>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

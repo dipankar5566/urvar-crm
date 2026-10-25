@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableRow, TableFooter,
 } from "@/components/ui/table";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +91,7 @@ export default async function BalanceSheetPage({
           <Badge variant="destructive">Does not balance — investigate before trusting this report.</Badge>
         )}
       </form>
+      <ExportLinks report="balance-sheet" params={{ asOf: asOfDate.toISOString().slice(0, 10) }} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

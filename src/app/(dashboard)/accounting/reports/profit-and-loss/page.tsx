@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter,
 } from "@/components/ui/table";
+import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,7 @@ export default async function ProfitAndLossPage({
           Update
         </button>
       </form>
+      <ExportLinks report="profit-and-loss" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

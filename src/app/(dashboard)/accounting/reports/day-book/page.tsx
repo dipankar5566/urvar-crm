@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/session";
 import { assertCan } from "@/lib/permissions";
 import { dayBookMoneyFlow } from "@/lib/accounting/financial-reports";
 import { formatInr } from "@/lib/accounting/money";
+import { ExportLinks } from "@/components/accounting/export-links";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -30,7 +31,10 @@ export default async function DayBookPage({
         title="Day Book"
         subtitle="Every posted entry in this range, across every account, in the order it happened. Money In/Out follow Vyapar's Day Book convention: a transfer between two cash-like accounts (cash, bank, cheques in transit) nets to zero."
       />
-      <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+      <div className="flex items-center justify-between">
+        <DateRangeFilterForm from={from ?? isoDate(fromDate)} to={to ?? isoDate(toDate)} />
+        <ExportLinks report="day-book" params={{ from: isoDate(fromDate), to: isoDate(toDate) }} />
+      </div>
 
       <Card>
         <CardContent className="p-0">
