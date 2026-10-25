@@ -57,6 +57,14 @@ export const ACCOUNT_KEYS = [
   "INTEREST_EXPENSE",
   "ASSET_DISPOSAL_GAIN_LOSS",
   "CASH_SHORT_OVER",
+
+  // Vyapar parity — cash/bank adjustments with no other side (3410/3420).
+  "CASH_ADJUSTMENT_EQUITY",
+  "BANK_ADJUSTMENT_EQUITY",
+
+  // Vyapar parity — cheques in transit (1115 / 2165).
+  "UNDEPOSITED_CHEQUES",
+  "UNWITHDRAWN_CHEQUES",
 ] as const;
 
 export type AccountKey = (typeof ACCOUNT_KEYS)[number];

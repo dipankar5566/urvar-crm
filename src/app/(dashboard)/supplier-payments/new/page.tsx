@@ -16,7 +16,14 @@ export default async function NewSupplierPaymentPage() {
       take: 500,
     }),
     prisma.ledgerAccount.findMany({
-      where: { type: "ASSET", isPostable: true, isActive: true, code: { in: ["1110", "1121"] } },
+      // Cash, every bank under 1120 (not just 1121 — banks added on the Bank
+      // Accounts screen must be payable from), and 2165 Unwithdrawn Cheques for a
+      // cheque the bank has not cleared yet.
+      where: {
+        isPostable: true,
+        isActive: true,
+        OR: [{ code: "1110" }, { code: "2165" }, { type: "ASSET", parent: { code: "1120" } }],
+      },
       select: { id: true, code: true, name: true },
       orderBy: { code: "asc" },
     }),

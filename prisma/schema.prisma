@@ -255,39 +255,40 @@ model User {
   accounts Account[]
 
   // App relations
-  ownedLeads              Lead[]                 @relation("LeadOwner")
-  ownedCustomers          Customer[]             @relation("CustomerOwner")
-  calls                   Call[]
-  transferredCalls        Call[]                 @relation("CallTransferredTo")
-  followUps               FollowUp[]
-  assignedTasks           Task[]                 @relation("TaskAssignee")
-  createdTasks            Task[]                 @relation("TaskCreator")
-  createdQuotations       Quotation[]            @relation("QuotationCreator")
-  createdOrders           Order[]                @relation("OrderCreator")
-  createdSuppliers        Supplier[]             @relation("SupplierCreator")
-  createdPurchaseInvoices PurchaseInvoice[]      @relation("PurchaseInvoiceCreator")
-  leadActivities          LeadActivity[]
-  pipelineMoves           PipelineStageHistory[]
-  uploadedFiles           File[]
-  notifications           Notification[]
-  sentMessages            MessageLog[]
-  fieldVisits             FieldVisit[]
-  auditLogs               AuditLog[]
-  postedEntries           JournalEntry[]         @relation("JournalPoster")
-  closedPeriods           FinancialPeriod[]      @relation("PeriodCloser")
-  salesInvoicesCreated    SalesInvoice[]         @relation("SalesInvoiceCreator")
-  receiptsCreated         Receipt[]              @relation("ReceiptCreator")
-  creditNotesCreated      CreditNote[]           @relation("CreditNoteCreator")
-  supplierPaymentsCreated SupplierPayment[]      @relation("SupplierPaymentCreator")
-  expensesCreated         Expense[]              @relation("ExpenseCreator")
-  expensesApproved        Expense[]              @relation("ExpenseApprover")
-  stockValuationsCreated  StockValuation[]       @relation("StockValuationCreator")
+  ownedLeads                 Lead[]                 @relation("LeadOwner")
+  ownedCustomers             Customer[]             @relation("CustomerOwner")
+  calls                      Call[]
+  transferredCalls           Call[]                 @relation("CallTransferredTo")
+  followUps                  FollowUp[]
+  assignedTasks              Task[]                 @relation("TaskAssignee")
+  createdTasks               Task[]                 @relation("TaskCreator")
+  createdQuotations          Quotation[]            @relation("QuotationCreator")
+  createdOrders              Order[]                @relation("OrderCreator")
+  createdSuppliers           Supplier[]             @relation("SupplierCreator")
+  createdPurchaseInvoices    PurchaseInvoice[]      @relation("PurchaseInvoiceCreator")
+  leadActivities             LeadActivity[]
+  pipelineMoves              PipelineStageHistory[]
+  uploadedFiles              File[]
+  notifications              Notification[]
+  sentMessages               MessageLog[]
+  fieldVisits                FieldVisit[]
+  auditLogs                  AuditLog[]
+  postedEntries              JournalEntry[]         @relation("JournalPoster")
+  closedPeriods              FinancialPeriod[]      @relation("PeriodCloser")
+  salesInvoicesCreated       SalesInvoice[]         @relation("SalesInvoiceCreator")
+  receiptsCreated            Receipt[]              @relation("ReceiptCreator")
+  creditNotesCreated         CreditNote[]           @relation("CreditNoteCreator")
+  supplierPaymentsCreated    SupplierPayment[]      @relation("SupplierPaymentCreator")
+  expensesCreated            Expense[]              @relation("ExpenseCreator")
+  expensesApproved           Expense[]              @relation("ExpenseApprover")
+  stockValuationsCreated     StockValuation[]       @relation("StockValuationCreator")
   // Phase 9 — Cash, Bank, Loans & Fixed Assets.
-  cashBankTxnsCreated        CashBankTransaction[] @relation("CashBankTxnCreator")
-  loansCreated               Loan[]                @relation("LoanCreator")
-  loanRepaymentsCreated      LoanRepayment[]       @relation("LoanRepaymentCreator")
-  fixedAssetsCreated         FixedAsset[]          @relation("FixedAssetCreator")
-  depreciationEntriesCreated DepreciationEntry[]   @relation("DepreciationEntryCreator")
+  cashBankTxnsCreated        CashBankTransaction[]  @relation("CashBankTxnCreator")
+  bankAccountsCreated        BankAccount[]          @relation("BankAccountCreator")
+  loansCreated               Loan[]                 @relation("LoanCreator")
+  loanRepaymentsCreated      LoanRepayment[]        @relation("LoanRepaymentCreator")
+  fixedAssetsCreated         FixedAsset[]           @relation("FixedAssetCreator")
+  depreciationEntriesCreated DepreciationEntry[]    @relation("DepreciationEntryCreator")
 
   @@index([role])
 }
@@ -671,12 +672,12 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  quotationItems     QuotationItem[]
-  purchaseItems      PurchaseInvoiceItem[]
-  orderItems         OrderItem[]
-  salesInvoiceItems  SalesInvoiceItem[]
+  quotationItems      QuotationItem[]
+  purchaseItems       PurchaseInvoiceItem[]
+  orderItems          OrderItem[]
+  salesInvoiceItems   SalesInvoiceItem[]
   stockValuationLines StockValuationLine[]
-  creditNoteItems   CreditNoteItem[]
+  creditNoteItems     CreditNoteItem[]
 
   @@index([category])
 }
@@ -1005,18 +1006,18 @@ model PurchaseInvoice {
   postedAt      DateTime?
   cancelledAt   DateTime?
 
-  notes       String?
-  items       PurchaseInvoiceItem[]
-  files       File[]
-  allocations SupplierPaymentAllocation[]
+  notes            String?
+  items            PurchaseInvoiceItem[]
+  files            File[]
+  allocations      SupplierPaymentAllocation[]
   /// Set when this invoice's spend was capitalised into the fixed asset
   /// register (Phase 9) rather than expensed — see FixedAsset's own comment
   /// for why that is a reclassification off PURCHASES, never a second AP line.
   capitalizedAsset FixedAsset?
-  createdById String
-  createdBy   User                        @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
-  createdAt   DateTime                    @default(now())
-  updatedAt   DateTime                    @updatedAt
+  createdById      String
+  createdBy        User                        @relation("PurchaseInvoiceCreator", fields: [createdById], references: [id])
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
 
   /// Re-entering the same invoice for the same supplier is a mistake, and
   /// the likeliest one when invoices are captured by photographing them.
@@ -1103,6 +1104,8 @@ enum JournalSourceType {
   FIXED_ASSET
   DEPRECIATION
   ASSET_DISPOSAL
+  /// Vyapar parity — a cheque deposited/cleared into a bank (cheques.ts).
+  CHEQUE_TRANSFER
 }
 
 enum JournalEntryStatus {
@@ -1208,12 +1211,12 @@ model LedgerAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  lines                  JournalLine[]
-  mappings               AccountMapping[]
-  receiptDeposits        Receipt[]         @relation("ReceiptDeposit")
-  supplierPaymentsSource SupplierPayment[] @relation("SupplierPaymentSource")
-  expenseCategoryFor     Expense[]         @relation("ExpenseCategory")
-  expensePaymentsSource  Expense[]         @relation("ExpensePaymentSource")
+  lines                    JournalLine[]
+  mappings                 AccountMapping[]
+  receiptDeposits          Receipt[]             @relation("ReceiptDeposit")
+  supplierPaymentsSource   SupplierPayment[]     @relation("SupplierPaymentSource")
+  expenseCategoryFor       Expense[]             @relation("ExpenseCategory")
+  expensePaymentsSource    Expense[]             @relation("ExpensePaymentSource")
   // Phase 9 — Cash, Bank, Loans & Fixed Assets.
   cashBankTxnDebits        CashBankTransaction[] @relation("CashBankTxnDebit")
   cashBankTxnCredits       CashBankTransaction[] @relation("CashBankTxnCredit")
@@ -1222,6 +1225,9 @@ model LedgerAccount {
   loanRepaymentsSource     LoanRepayment[]       @relation("LoanRepaymentSource")
   fixedAssetAccountFor     FixedAsset[]          @relation("FixedAssetAccount")
   fixedAssetPaymentsSource FixedAsset[]          @relation("FixedAssetPaymentSource")
+  // Vyapar parity — bank account master.
+  bankAccount              BankAccount?
+  chequesTransferred       Cheque[]              @relation("ChequeBank")
 
   @@index([type])
   @@index([parentId])
@@ -1254,8 +1260,8 @@ model FinancialPeriod {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  entries         JournalEntry[]
-  stockValuation  StockValuation?
+  entries        JournalEntry[]
+  stockValuation StockValuation?
 
   @@unique([companyId, financialYear, periodNumber])
   @@index([startDate, endDate])
@@ -1661,6 +1667,8 @@ model Receipt {
   updatedAt DateTime @updatedAt
 
   allocations ReceiptAllocation[]
+  // Vyapar parity — set when deposited to UNDEPOSITED_CHEQUES.
+  cheque      Cheque?
 
   @@index([customerId])
   @@index([receiptDate])
@@ -1836,6 +1844,8 @@ model SupplierPayment {
   updatedAt DateTime @updatedAt
 
   allocations SupplierPaymentAllocation[]
+  // Vyapar parity — set when paid from UNWITHDRAWN_CHEQUES.
+  cheque      Cheque?
 
   @@index([supplierId])
   @@index([paymentDate])
@@ -1884,7 +1894,7 @@ model Expense {
   /// flat-amount expense (no `items`, this false) keeps working exactly as
   /// before — the fields below all default to zero/false and are simply
   /// unused on that path.
-  isGstApplicable Boolean @default(false)
+  isGstApplicable  Boolean @default(false)
   /// Whether this expense's GST may be claimed as Input Tax Credit. Defaults
   /// false on purpose: a blocked credit (Sec 17(5) — staff welfare, motor
   /// vehicles, etc.) claimed by default would be a real over-claim, not a
@@ -1892,10 +1902,10 @@ model Expense {
   /// every GST expense silently claiming credit.
   claimInputCredit Boolean @default(false)
 
-  subtotal   Decimal @default(0) @db.Decimal(14, 2)
-  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
-  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
-  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  subtotal        Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmount      Decimal @default(0) @db.Decimal(14, 2)
+  sgstAmount      Decimal @default(0) @db.Decimal(14, 2)
+  igstAmount      Decimal @default(0) @db.Decimal(14, 2)
   /// The "Transportation" charge on the entry screen — posts to its own
   /// Freight Inward account, never folded into the expense's category.
   transportAmount Decimal @default(0) @db.Decimal(12, 2)
@@ -2071,6 +2081,97 @@ enum CashBankTxnType {
   BANK_CHARGE
   INTEREST_INCOME
   CASH_ADJUSTMENT
+  /// Vyapar parity (docs/VYAPAR_PARITY_SPEC.md §2.2): a bank balance change
+  /// with no cash side, offset to Capital Adjustments (BANK_ADJUSTMENT_EQUITY).
+  BANK_ADJ_INCREASE
+  BANK_ADJ_DECREASE
+}
+
+/// Bank account master (VYAPAR_PARITY_SPEC.md §2.1). The money lives on the
+/// linked LedgerAccount under 1120 — this row only adds the identity a bank
+/// account needs (number, IFSC, UPI) and its opening balance. The opening
+/// balance is posted once against OPENING_BALANCE_EQUITY; `openingEntryId`
+/// points at that entry and `openingRevision` advances each time it is
+/// re-posted after an edit. Existing bank ledgers (1121, 1122) are linked
+/// with `postOpening: false` so their migrated balances are not posted twice.
+model BankAccount {
+  id String @id @default(cuid())
+
+  ledgerAccountId String        @unique
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+
+  displayName       String
+  bankName          String?
+  branch            String?
+  accountNumber     String?
+  ifsc              String?
+  accountHolderName String?
+  upiId             String?
+  isOverdraft       Boolean @default(false)
+  printOnInvoice    Boolean @default(false)
+
+  /// Signed: negative for an overdraft opening.
+  openingBalance       Decimal   @default(0) @db.Decimal(14, 2)
+  openingDate          DateTime?
+  openingEntryId       String?   @unique
+  openingRevision      Int       @default(0)
+  /// True when details were attached to a pre-existing bank ledger whose
+  /// balance came from real postings; its opening balance is never managed here.
+  linkedExistingLedger Boolean   @default(false)
+
+  isActive Boolean @default(true)
+
+  createdById String
+  createdBy   User     @relation("BankAccountCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+/// Cheque lifecycle (VYAPAR_PARITY_SPEC.md §2.3, confirmed by REA round 7).
+/// Vyapar has exactly two states — open (held in its "Cheque" account) and
+/// transferred to a bank — plus reopen. A RECEIVED cheque comes from a Receipt
+/// deposited to UNDEPOSITED_CHEQUES; an ISSUED one from a SupplierPayment paid
+/// from UNWITHDRAWN_CHEQUES. Depositing/clearing posts the move to the bank
+/// (`transferEntryId`, key CHEQUE_TRANSFER:<id>:<revision>); reopening
+/// reverses it. CANCELLED = its receipt/payment was cancelled while OPEN.
+enum ChequeDirection {
+  RECEIVED
+  ISSUED
+}
+
+enum ChequeStatus {
+  OPEN
+  DEPOSITED
+  CLEARED
+  CANCELLED
+}
+
+model Cheque {
+  id           String          @id @default(cuid())
+  direction    ChequeDirection
+  status       ChequeStatus    @default(OPEN)
+  chequeNumber String?
+  amount       Decimal         @db.Decimal(14, 2)
+  chequeDate   DateTime
+
+  receiptId         String?          @unique
+  receipt           Receipt?         @relation(fields: [receiptId], references: [id])
+  supplierPaymentId String?          @unique
+  supplierPayment   SupplierPayment? @relation(fields: [supplierPaymentId], references: [id])
+
+  bankLedgerAccountId String?
+  bankLedgerAccount   LedgerAccount? @relation("ChequeBank", fields: [bankLedgerAccountId], references: [id])
+  transferDate        DateTime?
+  transferEntryId     String?        @unique
+  transferRevision    Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([direction])
 }
 
 /// A cash/bank movement not already captured by a Receipt, Expense or
@@ -2120,8 +2221,8 @@ enum LoanStatus {
 /// derived at read time from these terms (see loan-schedule.ts) rather than
 /// stored, so it can never drift from them.
 model Loan {
-  id         String @id @default(cuid())
-  lenderName String
+  id              String  @id @default(cuid())
+  lenderName      String
   /// The lender's own reference/account number, for reconciling against
   /// their statement. Free text — it is their identifier, not ours.
   lenderReference String?
@@ -2137,10 +2238,10 @@ model Loan {
   disbursedToAccountId String
   disbursedToAccount   LedgerAccount @relation("LoanDisbursement", fields: [disbursedToAccountId], references: [id])
 
-  principal         Decimal @db.Decimal(14, 2)
+  principal         Decimal  @db.Decimal(14, 2)
   /// Annual nominal rate, percent. 3dp: a real bank rate like 10.499% needs
   /// more precision than TaxRate.ratePercent's (5,2).
-  annualRatePercent Decimal @db.Decimal(6, 3)
+  annualRatePercent Decimal  @db.Decimal(6, 3)
   tenureMonths      Int
   startDate         DateTime
 
@@ -2152,9 +2253,9 @@ model Loan {
   status LoanStatus @default(ACTIVE)
 
   disbursementEntryId String?   @unique
-  closedAt             DateTime?
-  cancelledAt          DateTime?
-  notes                String?
+  closedAt            DateTime?
+  cancelledAt         DateTime?
+  notes               String?
 
   createdById String
   createdBy   User     @relation("LoanCreator", fields: [createdById], references: [id])
@@ -2271,7 +2372,7 @@ model FixedAsset {
 /// `LoanRepayment`'s own comment documents and this schema hit for real in
 /// testing before the fix.
 model DepreciationEntry {
-  id            String @id @default(cuid())
+  id            String     @id @default(cuid())
   fixedAssetId  String
   fixedAsset    FixedAsset @relation(fields: [fixedAssetId], references: [id])
   financialYear Int

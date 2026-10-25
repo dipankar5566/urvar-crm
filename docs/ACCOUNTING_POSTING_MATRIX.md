@@ -199,3 +199,41 @@ period-end valuation above.
    transaction that writes the document, so the two commit together.
 4. Add a test asserting the entry balances and hits the accounts this table
    says it should.
+
+## Vyapar parity: bank accounts and cash/bank adjustments (2026-10-25)
+
+Source: `docs/VYAPAR_PARITY_SPEC.md` §2.1–2.2. Implemented in `src/lib/accounting/bank-accounts.ts` and `cash-bank.ts`.
+
+| Event | Dr | Cr | sourceType | Idempotency key |
+|---|---|---|---|---|
+| Bank account opening balance (positive) | Bank ledger (new child of 1120) | `OPENING_BALANCE_EQUITY` (3300) | OPENING_BALANCE | `BANK_OPENING:<bankAccountId>:<revision>` |
+| Bank account opening balance (overdraft, negative) | `OPENING_BALANCE_EQUITY` | Bank ledger | OPENING_BALANCE | same |
+| Opening balance changed | reversal of the previous revision, then the new figure under revision + 1 | | REVERSAL / OPENING_BALANCE | `BANK_OPENING:<id>:<n+1>` |
+| `BANK_ADJ_INCREASE` (Vyapar 17) | Bank ledger | `BANK_ADJUSTMENT_EQUITY` (3420) | CASH_BANK_TRANSFER | `CASH_BANK_TRANSFER:<txnId>:1` |
+| `BANK_ADJ_DECREASE` (Vyapar 18) | `BANK_ADJUSTMENT_EQUITY` | Bank ledger | CASH_BANK_TRANSFER | same |
+| `CASH_ADJUSTMENT` OVERAGE / Add cash (Vyapar 19), default offset | `CASH_ON_HAND` | `CASH_ADJUSTMENT_EQUITY` (3410) | CASH_BANK_TRANSFER | same |
+| `CASH_ADJUSTMENT` SHORTAGE / Reduce cash (Vyapar 20), default offset | `CASH_ADJUSTMENT_EQUITY` | `CASH_ON_HAND` | CASH_BANK_TRANSFER | same |
+
+Rules:
+- A bank adjustment must hit a child of 1120.
+- A `CASH_ADJUSTMENT` offset is EXPENSE or EQUITY (e.g. 5800 Cash Short/Over, picked explicitly). Omitted, it defaults to 3410 (decision D4).
+- Attaching details to an existing bank ledger (1121, 1122) posts nothing. Its opening balance is never managed through `BankAccount`; correct it by journal entry.
+
+## Vyapar parity: cheques (2026-10-25)
+
+Source: `docs/VYAPAR_PARITY_SPEC.md` §2.3, with the state machine confirmed by REA round 7: Vyapar has only open, transferred and reopen, with no bounce state. Implemented in `src/lib/accounting/cheques.ts`.
+
+| Event | Dr | Cr | sourceType | Idempotency key |
+|---|---|---|---|---|
+| Receipt by cheque, held (deposit account = `UNDEPOSITED_CHEQUES` 1115) | `UNDEPOSITED_CHEQUES` | AR / Advance from customer (as any receipt) | RECEIPT | `RECEIPT:<id>:1` |
+| Received cheque deposited | Bank (child of 1120) | `UNDEPOSITED_CHEQUES` | CHEQUE_TRANSFER | `CHEQUE_TRANSFER:<chequeId>:<revision>` |
+| Supplier payment by cheque, held (payment account = `UNWITHDRAWN_CHEQUES` 2165) | AP / Advance to supplier | `UNWITHDRAWN_CHEQUES` | SUPPLIER_PAYMENT | `SUPPLIER_PAYMENT:<id>:1` |
+| Issued cheque cleared | `UNWITHDRAWN_CHEQUES` | Bank | CHEQUE_TRANSFER | same as deposit |
+| Reopen (deposited or cleared) | reversal of the transfer entry | | REVERSAL | n/a |
+
+Rules:
+- Only `method = CHEQUE` may use 1115 / 2165.
+- A cheque deposited straight to a bank opens no Cheque record.
+- Cancelling a receipt or payment whose cheque is OPEN marks the cheque CANCELLED; the document's own reversal clears the holding account.
+- If the cheque is DEPOSITED or CLEARED, cancellation is refused until it is reopened. A bounced cheque is handled by reopen, then cancel receipt.
+- A cheque cannot be deposited or cleared before its cheque date.

@@ -8,6 +8,8 @@ import { allocateDocumentNumber, DOCUMENT_TYPES } from "./numbering";
 import { add, gt, money, round, sub, sum, toAmountString, type Money } from "./money";
 import { logAudit } from "@/lib/audit";
 import { syncCustomerOutstanding } from "./receivables";
+import { loadAccountMap, requireAccount } from "./account-map";
+import { ChequeError, openChequeForReceipt, releaseChequeForCancellation } from "./cheques";
 
 /**
  * Customer receipts and their allocation against invoices.
@@ -146,14 +148,20 @@ export async function recordReceipt(
     // what kind it is — without this, a crafted depositAccountId could post a
     // customer receipt as a debit to an expense or liability account. Money
     // received is deposited to Cash on Hand (1110) or any account under Bank
-    // Accounts (1120), the same set the receipt form offers.
+    // Accounts (1120), the same set the receipt form offers — or, for a
+    // cheque, held in UNDEPOSITED_CHEQUES until it is deposited (cheques.ts).
     const deposit = await tx.ledgerAccount.findUnique({
       where: { id: input.depositAccountId },
-      select: { code: true, parent: { select: { code: true } } },
+      select: { id: true, code: true, parent: { select: { code: true } } },
     });
     if (!deposit) throw new ReceiptError("Deposit account not found.");
-    if (deposit.code !== "1110" && deposit.parent?.code !== "1120") {
-      throw new ReceiptError("Money received must be deposited to Cash on Hand or a bank account.");
+    const undepositedChequesId = requireAccount(await loadAccountMap(tx), "UNDEPOSITED_CHEQUES");
+    const heldAsCheque = deposit.id === undepositedChequesId;
+    if (heldAsCheque && input.method !== "CHEQUE") {
+      throw new ReceiptError("Only a cheque receipt can be held in Undeposited Cheques.");
+    }
+    if (!heldAsCheque && deposit.code !== "1110" && deposit.parent?.code !== "1120") {
+      throw new ReceiptError("Money received must be deposited to Cash on Hand, a bank account, or Undeposited Cheques.");
     }
 
     const allocationInputs = input.allocations ?? [];
@@ -254,6 +262,8 @@ export async function recordReceipt(
 
     await tx.receipt.update({ where: { id: receipt.id }, data: { postedEntryId: posted.entryId } });
 
+    if (heldAsCheque) await openChequeForReceipt(tx, receipt);
+
     for (const a of allocationRows) {
       await refreshInvoiceStatus(tx, a.invoiceId);
     }
@@ -311,6 +321,13 @@ export async function cancelReceipt(
     if (!receipt) throw new ReceiptError("Receipt not found.");
     if (receipt.status === "CANCELLED") throw new ReceiptError("Receipt is already cancelled.");
     if (!receipt.postedEntryId) throw new ReceiptError("This receipt was never posted.");
+
+    try {
+      await releaseChequeForCancellation(tx, { receiptId: receipt.id });
+    } catch (err) {
+      if (err instanceof ChequeError) throw new ReceiptError(`Cannot cancel this receipt: ${err.message}`);
+      throw err;
+    }
 
     await reverseJournalEntry(
       { entryId: receipt.postedEntryId, reason: input.reason, postedById: input.cancelledById },

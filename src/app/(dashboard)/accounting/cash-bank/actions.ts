@@ -44,9 +44,12 @@ const inputSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("CASH_ADJUSTMENT"),
     direction: z.enum(["SHORTAGE", "OVERAGE"]),
-    adjustmentAccountId: z.string().min(1),
+    // Empty/omitted = Capital Adjustments (3410), Vyapar's Add/Reduce Cash.
+    adjustmentAccountId: z.string().optional(),
     ...baseFields,
   }),
+  z.object({ type: z.literal("BANK_ADJ_INCREASE"), bankAccountId: z.string().min(1), ...baseFields }),
+  z.object({ type: z.literal("BANK_ADJ_DECREASE"), bankAccountId: z.string().min(1), ...baseFields }),
 ]);
 
 export async function recordCashBankTransactionAction(

@@ -37,19 +37,46 @@ export type CreateCashBankTransactionInput =
   | (BaseInput & { type: "TRANSFER"; fromAccountId: string; toAccountId: string })
   | (BaseInput & { type: "BANK_CHARGE"; bankAccountId: string; expenseAccountId: string })
   | (BaseInput & { type: "INTEREST_INCOME"; bankAccountId: string; incomeAccountId: string })
-  | (BaseInput & { type: "CASH_ADJUSTMENT"; direction: "SHORTAGE" | "OVERAGE"; adjustmentAccountId: string });
+  | (BaseInput & {
+      type: "CASH_ADJUSTMENT";
+      direction: "SHORTAGE" | "OVERAGE";
+      /**
+       * Expense or equity account to offset the cash change. Omitted, it
+       * defaults to CASH_ADJUSTMENT_EQUITY (3410) — Vyapar's Add/Reduce Cash
+       * treatment (VYAPAR_PARITY_SPEC.md §2.2, decision D4).
+       */
+      adjustmentAccountId?: string | null;
+    })
+  // A bank balance change with no cash side (Vyapar types 17/18), offset to
+  // BANK_ADJUSTMENT_EQUITY (3420).
+  | (BaseInput & { type: "BANK_ADJ_INCREASE"; bankAccountId: string })
+  | (BaseInput & { type: "BANK_ADJ_DECREASE"; bankAccountId: string });
+
+type AccountTypeName = "ASSET" | "EXPENSE" | "INCOME" | "EQUITY";
 
 async function assertAccountUsable(
   tx: Prisma.TransactionClient,
   accountId: string,
-  expectType?: "ASSET" | "EXPENSE" | "INCOME",
+  expectType?: AccountTypeName | AccountTypeName[],
 ) {
   const account = await tx.ledgerAccount.findUnique({ where: { id: accountId } });
   if (!account) throw new CashBankError("That account does not exist.");
   if (!account.isActive) throw new CashBankError(`${account.code} ${account.name} is inactive.`);
   if (!account.isPostable) throw new CashBankError(`${account.code} ${account.name} is a grouping account.`);
-  if (expectType && account.type !== expectType) {
-    throw new CashBankError(`${account.code} ${account.name} is not a${expectType === "ASSET" ? "n" : ""} ${expectType} account.`);
+  const allowed = expectType === undefined ? null : Array.isArray(expectType) ? expectType : [expectType];
+  if (allowed && !allowed.includes(account.type as AccountTypeName)) {
+    // Every type name starts with a vowel, hence "an".
+    throw new CashBankError(`${account.code} ${account.name} is not an ${allowed.join(" or ")} account.`);
+  }
+  return account;
+}
+
+/** A bank adjustment must hit a real bank ledger — a child of 1120 Bank Accounts. */
+async function assertBankLedger(tx: Prisma.TransactionClient, accountId: string) {
+  const account = await assertAccountUsable(tx, accountId, "ASSET");
+  const parent = account.parentId ? await tx.ledgerAccount.findUnique({ where: { id: account.parentId } }) : null;
+  if (parent?.code !== "1120") {
+    throw new CashBankError(`${account.code} ${account.name} is not a bank account (it is not under 1120 Bank Accounts).`);
   }
   return account;
 }
@@ -106,13 +133,27 @@ export async function createCashBankTransaction(
         break;
       }
       case "CASH_ADJUSTMENT": {
-        await assertAccountUsable(tx, input.adjustmentAccountId, "EXPENSE");
+        const offsetId = input.adjustmentAccountId || requireAccount(accountMap, "CASH_ADJUSTMENT_EQUITY");
+        await assertAccountUsable(tx, offsetId, ["EXPENSE", "EQUITY"]);
         if (input.direction === "SHORTAGE") {
-          debitAccountId = input.adjustmentAccountId;
+          debitAccountId = offsetId;
           creditAccountId = cashAccountId;
         } else {
           debitAccountId = cashAccountId;
-          creditAccountId = input.adjustmentAccountId;
+          creditAccountId = offsetId;
+        }
+        break;
+      }
+      case "BANK_ADJ_INCREASE":
+      case "BANK_ADJ_DECREASE": {
+        await assertBankLedger(tx, input.bankAccountId);
+        const offsetId = requireAccount(accountMap, "BANK_ADJUSTMENT_EQUITY");
+        if (input.type === "BANK_ADJ_INCREASE") {
+          debitAccountId = input.bankAccountId;
+          creditAccountId = offsetId;
+        } else {
+          debitAccountId = offsetId;
+          creditAccountId = input.bankAccountId;
         }
         break;
       }

@@ -13,15 +13,30 @@ import { recordCashBankTransactionAction } from "../actions";
 
 type AccountOption = { id: string; code: string; name: string };
 
+// Labels follow Vyapar's Cash & Bank menu (docs/VYAPAR_PARITY_SPEC.md §1, G2-G4).
 const TYPE_LABELS = {
-  DEPOSIT: "Cash → Bank deposit",
-  WITHDRAWAL: "Bank → Cash withdrawal",
+  DEPOSIT: "Cash → Bank (deposit)",
+  WITHDRAWAL: "Bank → Cash (withdrawal)",
   TRANSFER: "Bank → Bank transfer",
+  BANK_ADJ_INCREASE: "Increase bank balance (no cash side)",
+  BANK_ADJ_DECREASE: "Decrease bank balance (no cash side)",
   BANK_CHARGE: "Bank charge",
   INTEREST_INCOME: "Interest earned",
-  CASH_ADJUSTMENT: "Cash count correction",
+  CASH_ADJUSTMENT: "Add / reduce cash",
 } as const;
 type TxnType = keyof typeof TYPE_LABELS;
+
+const NEEDS_BANK: ReadonlySet<TxnType> = new Set([
+  "DEPOSIT",
+  "WITHDRAWAL",
+  "BANK_CHARGE",
+  "INTEREST_INCOME",
+  "BANK_ADJ_INCREASE",
+  "BANK_ADJ_DECREASE",
+]);
+
+/** Sentinel for "Capital Adjustments (default)" — sent to the server as no account. */
+const DEFAULT_OFFSET = "__default__";
 
 export function MovementForm({
   bankAccounts,
@@ -50,14 +65,13 @@ export function MovementForm({
   const [toAccountId, setToAccountId] = useState(bankAccounts[1]?.id ?? bankAccounts[0]?.id ?? "");
   const [expenseAccountId, setExpenseAccountId] = useState(defaultExpenseAccountId);
   const [incomeAccountId, setIncomeAccountId] = useState(defaultIncomeAccountId);
-  const [direction, setDirection] = useState<"SHORTAGE" | "OVERAGE">("SHORTAGE");
+  const [direction, setDirection] = useState<"SHORTAGE" | "OVERAGE">("OVERAGE");
+  const [offsetAccountId, setOffsetAccountId] = useState(DEFAULT_OFFSET);
 
   function submit() {
     const amountNum = Number(amount);
     if (!amountNum || amountNum <= 0) return toast.error("Enter an amount greater than zero.");
-    if ((type === "DEPOSIT" || type === "WITHDRAWAL" || type === "BANK_CHARGE" || type === "INTEREST_INCOME") && !bankAccountId) {
-      return toast.error("Select a bank account.");
-    }
+    if (NEEDS_BANK.has(type) && !bankAccountId) return toast.error("Select a bank account.");
     if (type === "TRANSFER" && (!fromAccountId || !toAccountId || fromAccountId === toAccountId)) {
       return toast.error("Select two different accounts to transfer between.");
     }
@@ -66,7 +80,7 @@ export function MovementForm({
 
     start(async () => {
       const result = await recordCashBankTransactionAction(
-        type === "DEPOSIT" || type === "WITHDRAWAL"
+        type === "DEPOSIT" || type === "WITHDRAWAL" || type === "BANK_ADJ_INCREASE" || type === "BANK_ADJ_DECREASE"
           ? { type, bankAccountId, ...base }
           : type === "TRANSFER"
             ? { type, fromAccountId, toAccountId, ...base }
@@ -74,7 +88,12 @@ export function MovementForm({
               ? { type, bankAccountId, expenseAccountId, ...base }
               : type === "INTEREST_INCOME"
                 ? { type, bankAccountId, incomeAccountId, ...base }
-                : { type, direction, adjustmentAccountId: expenseAccountId, ...base },
+                : {
+                    type,
+                    direction,
+                    adjustmentAccountId: offsetAccountId === DEFAULT_OFFSET ? undefined : offsetAccountId,
+                    ...base,
+                  },
       );
       if ("error" in result) {
         toast.error(result.error);
@@ -113,7 +132,7 @@ export function MovementForm({
             <Input id="amount" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
           </div>
 
-          {(type === "DEPOSIT" || type === "WITHDRAWAL" || type === "BANK_CHARGE" || type === "INTEREST_INCOME") && (
+          {NEEDS_BANK.has(type) && (
             <div className="space-y-2">
               <Label>Bank account</Label>
               <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
@@ -124,6 +143,12 @@ export function MovementForm({
                   ))}
                 </SelectContent>
               </Select>
+              {(type === "BANK_ADJ_INCREASE" || type === "BANK_ADJ_DECREASE") && (
+                <p className="text-xs text-muted-foreground">
+                  Posts against Capital Adjustments → Bank Adjustment (3420). Use Bank charge or Interest earned when
+                  the bank statement says why the balance changed.
+                </p>
+              )}
             </div>
           )}
 
@@ -183,17 +208,33 @@ export function MovementForm({
           )}
 
           {type === "CASH_ADJUSTMENT" && (
-            <div className="space-y-2">
-              <Label>Physical count found</Label>
-              <Select value={direction} onValueChange={(v) => setDirection(v as "SHORTAGE" | "OVERAGE")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="SHORTAGE">Less cash than the books show (shortage)</SelectItem>
-                  <SelectItem value="OVERAGE">More cash than the books show (overage)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Posts against Cash Short / (Over) — the standard account for physical-count differences.</p>
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label>Adjustment</Label>
+                <Select value={direction} onValueChange={(v) => setDirection(v as "SHORTAGE" | "OVERAGE")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OVERAGE">Add cash</SelectItem>
+                    <SelectItem value="SHORTAGE">Reduce cash</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Offset account</Label>
+                <Select value={offsetAccountId} onValueChange={(v) => setOffsetAccountId(v ?? DEFAULT_OFFSET)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DEFAULT_OFFSET}>3410 Capital Adjustments → Cash Adjustment (default)</SelectItem>
+                    {expenseAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Pick 5800 Cash Short / (Over) for a physical-count difference that should hit profit.
+                </p>
+              </div>
+            </>
           )}
 
           <div className="space-y-2">

@@ -22,7 +22,11 @@
     "voice:latency": "tsx voice-agent/scripts/latency-report.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:seed-accounting": "tsx scripts/seed-accounting.ts"
+    "db:seed-accounting": "tsx scripts/seed-accounting.ts",
+    "dev:local": "next dev -p 3005",
+    "db:dev:migrate": "node --env-file=.env.test node_modules/prisma/build/index.js migrate deploy",
+    "db:dev:seed-accounting": "tsx --env-file=.env.test scripts/seed-accounting.ts --apply",
+    "db:dev:seed-user": "tsx --env-file=.env.test scripts/seed-dev-user.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

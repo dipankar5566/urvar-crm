@@ -42,6 +42,15 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "1100", name: "Current Assets", type: "ASSET", parent: "1000", ...GROUP },
 
   { code: "1110", name: "Cash on Hand", type: "ASSET", parent: "1100" },
+  {
+    code: "1115",
+    name: "Undeposited Cheques",
+    type: "ASSET",
+    parent: "1100",
+    description:
+      "Cheques received but not yet deposited (Vyapar's built-in Cheque account). " +
+      "Cleared to a bank by cheques.ts depositCheque().",
+  },
   { code: "1120", name: "Bank Accounts", type: "ASSET", parent: "1100", ...GROUP },
   { code: "1121", name: "Bank - Current Account", type: "ASSET", parent: "1120" },
   {
@@ -121,6 +130,13 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
   { code: "2140", name: "TDS Payable", type: "LIABILITY", parent: "2100" },
   { code: "2150", name: "Salaries Payable", type: "LIABILITY", parent: "2100" },
   { code: "2160", name: "Other Payables", type: "LIABILITY", parent: "2100" },
+  {
+    code: "2165",
+    name: "Unwithdrawn Cheques",
+    type: "LIABILITY",
+    parent: "2100",
+    description: "Cheques issued to suppliers that the bank has not yet paid out. Cleared by cheques.ts.",
+  },
 
   { code: "2200", name: "Long-term Liabilities", type: "LIABILITY", parent: "2000", ...GROUP },
   {
@@ -154,6 +170,25 @@ export const CHART_OF_ACCOUNTS: SeedAccount[] = [
       "here, never to revenue - that income was already recognised in Vyapar " +
       "and already sits in a filed GSTR. Should net to zero once the opening " +
       "trial balance is complete and signed off.",
+  },
+  // Vyapar parity (docs/VYAPAR_PARITY_SPEC.md §2.2) — Vyapar posts a cash or
+  // bank balance change that has no other side to Owner's Equity ->
+  // Adjustments, split Cash/Bank. Kept separate from 3300 so an opening-
+  // balance review is not muddied by day-to-day count corrections.
+  { code: "3400", name: "Capital Adjustments", type: "EQUITY", parent: "3000", ...GROUP },
+  {
+    code: "3410",
+    name: "Cash Adjustment",
+    type: "EQUITY",
+    parent: "3400",
+    description: "Contra side of an Add/Reduce Cash adjustment with no other account.",
+  },
+  {
+    code: "3420",
+    name: "Bank Adjustment",
+    type: "EQUITY",
+    parent: "3400",
+    description: "Contra side of an Increase/Decrease Bank Balance adjustment with no cash side.",
   },
 
   // ---------------------------------------------------------------- INCOME
@@ -279,4 +314,12 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
   INTEREST_EXPENSE: "5710",
   ASSET_DISPOSAL_GAIN_LOSS: "4920",
   CASH_SHORT_OVER: "5800",
+
+  // Vyapar parity — cash/bank adjustments with no other side.
+  CASH_ADJUSTMENT_EQUITY: "3410",
+  BANK_ADJUSTMENT_EQUITY: "3420",
+
+  // Vyapar parity — cheques in transit.
+  UNDEPOSITED_CHEQUES: "1115",
+  UNWITHDRAWN_CHEQUES: "2165",
 };

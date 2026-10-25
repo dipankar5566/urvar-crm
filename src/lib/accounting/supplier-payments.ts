@@ -7,6 +7,8 @@ import { financialYearOf } from "./fiscal";
 import { allocateDocumentNumber, DOCUMENT_TYPES } from "./numbering";
 import { add, gt, money, round, sub, sum, toAmountString, type Money } from "./money";
 import { logAudit } from "@/lib/audit";
+import { loadAccountMap, requireAccount } from "./account-map";
+import { ChequeError, openChequeForSupplierPayment, releaseChequeForCancellation } from "./cheques";
 
 /**
  * Supplier payments and their allocation against purchase invoices.
@@ -94,6 +96,26 @@ export async function recordSupplierPayment(
 
     const amount = round(input.amount);
     if (!gt(amount, 0)) throw new SupplierPaymentError("Payment amount must be greater than zero.");
+
+    // A cheque paid from UNWITHDRAWN_CHEQUES is held until the bank clears it (cheques.ts).
+    const unwithdrawnChequesId = requireAccount(await loadAccountMap(tx), "UNWITHDRAWN_CHEQUES");
+    const heldAsCheque = input.paymentAccountId === unwithdrawnChequesId;
+    if (heldAsCheque && input.method !== "CHEQUE") {
+      throw new SupplierPaymentError("Only a cheque payment can be held in Unwithdrawn Cheques.");
+    }
+    // postJournalEntry only checks that an account is active and postable, not
+    // what kind it is — the same gap recordReceipt() closes. Without this, a
+    // crafted paymentAccountId could credit an income or expense account.
+    if (!heldAsCheque) {
+      const source = await tx.ledgerAccount.findUnique({
+        where: { id: input.paymentAccountId },
+        select: { code: true, parent: { select: { code: true } } },
+      });
+      if (!source) throw new SupplierPaymentError("Payment account not found.");
+      if (source.code !== "1110" && source.parent?.code !== "1120") {
+        throw new SupplierPaymentError("A supplier must be paid from Cash on Hand, a bank account, or Unwithdrawn Cheques.");
+      }
+    }
 
     const allocationInputs = input.allocations ?? [];
     let allocatedTotal = money(0);
@@ -195,6 +217,8 @@ export async function recordSupplierPayment(
 
     await tx.supplierPayment.update({ where: { id: payment.id }, data: { postedEntryId: posted.entryId } });
 
+    if (heldAsCheque) await openChequeForSupplierPayment(tx, payment);
+
     for (const a of allocationRows) {
       await refreshPurchaseInvoiceStatus(tx, a.invoiceId);
     }
@@ -249,6 +273,13 @@ export async function cancelSupplierPayment(
     if (!payment) throw new SupplierPaymentError("Payment not found.");
     if (payment.status === "CANCELLED") throw new SupplierPaymentError("Payment is already cancelled.");
     if (!payment.postedEntryId) throw new SupplierPaymentError("This payment was never posted.");
+
+    try {
+      await releaseChequeForCancellation(tx, { supplierPaymentId: payment.id });
+    } catch (err) {
+      if (err instanceof ChequeError) throw new SupplierPaymentError(`Cannot cancel this payment: ${err.message}`);
+      throw err;
+    }
 
     await reverseJournalEntry(
       { entryId: payment.postedEntryId, reason: input.reason, postedById: input.cancelledById },

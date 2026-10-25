@@ -22,6 +22,8 @@ const TYPE_LABELS: Record<string, string> = {
   BANK_CHARGE: "Bank Charge",
   INTEREST_INCOME: "Interest Income",
   CASH_ADJUSTMENT: "Cash Adjustment",
+  BANK_ADJ_INCREASE: "Bank Adj Increase",
+  BANK_ADJ_DECREASE: "Bank Adj Decrease",
 };
 
 export default async function CashBankPage() {
@@ -50,11 +52,19 @@ export default async function CashBankPage() {
         title="Cash & Bank"
         subtitle="Deposits, withdrawals, transfers, bank charges, interest and cash-count corrections."
         action={
-          canWrite && (
-            <Button size="sm" render={<Link href="/accounting/cash-bank/new" />}>
-              Record Movement
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" render={<Link href="/accounting/cash-bank/bank-accounts" />}>
+              Bank Accounts
             </Button>
-          )
+            <Button size="sm" variant="outline" render={<Link href="/accounting/cash-bank/cheques" />}>
+              Cheques
+            </Button>
+            {canWrite && (
+              <Button size="sm" render={<Link href="/accounting/cash-bank/new" />}>
+                Record Movement
+              </Button>
+            )}
+          </div>
         }
       />
 

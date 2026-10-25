@@ -4,13 +4,12 @@ import type { Prisma } from "@/generated/prisma/client";
 /**
  * Run a test body inside a transaction that is ALWAYS rolled back.
  *
- * This repo has no separate test database and cannot get one: DATABASE_URL
- * points at the live `urvar_crm`, and the app's role (`urvar_app`) has
- * `rolcreatedb = false` — the same reason `prisma migrate dev` fails with
- * P3014 on this box.
+ * Tests run against the dev database `urvar_crm_dev` (tests/setup.ts loads
+ * .env.test and refuses production). The rollback still matters: the dev DB
+ * is shared by every test file and by local `npm run dev:local`.
  *
- * So integration tests run against the real schema and the real seeded chart
- * of accounts, but every write is discarded: the body runs inside an
+ * Integration tests run against the real schema and the seeded chart of
+ * accounts, but every write is discarded: the body runs inside an
  * interactive transaction that is unwound by throwing a sentinel. The throw is
  * unconditional — there is no path on which this transaction commits.
  *
