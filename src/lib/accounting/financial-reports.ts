@@ -547,6 +547,72 @@ export async function dayBook(fromDate: Date, toDate: Date, db: Db = prisma): Pr
   }));
 }
 
+export type DayBookMoneyFlowEntry = DayBookEntry & { moneyIn: Money; moneyOut: Money };
+export type DayBookMoneyFlowResult = { entries: DayBookMoneyFlowEntry[]; totalIn: Money; totalOut: Money; net: Money };
+
+/**
+ * `dayBook()` with Vyapar's Money In / Money Out columns added
+ * (VYAPAR_PARITY_SPEC.md R8) — "cash-like" being Cash on Hand, every child
+ * of Bank Accounts, and the two cheque-in-transit clearing accounts
+ * (Undeposited/Unwithdrawn Cheques). Per entry, Money In is the sum of
+ * debits on cash-like lines and Money Out the sum of credits; a transfer
+ * between two cash-like accounts (deposit, withdrawal, bank-to-bank, a
+ * cheque being deposited/withdrawn) nets to 0/0 because both its lines are
+ * cash-like — exactly the zero Vyapar's own exported Day Book shows for
+ * those rows, confirmed against `vyapar/rea-test-reports/Daybook_*.xlsx`.
+ *
+ * One thing this does **not** reproduce: Vyapar's Sale/Purchase document is
+ * single-entry and can carry an immediate payment on the same row, so its
+ * Day Book shows one row with a non-zero Money In/Out for a sale that was
+ * paid for on the spot. A `SalesInvoice` here never touches a cash-like
+ * account by itself (Dr AR / Cr Revenue+GST only) — the payment is always a
+ * separate `Receipt` entry, dated and rowed separately. The *aggregate*
+ * Money In/Out across a range still agrees; which entry it lands on does
+ * not. See `tests/vyapar-parity.test.ts` and the amendment this forced in
+ * VYAPAR_PARITY_SPEC.md.
+ */
+export async function dayBookMoneyFlow(fromDate: Date, toDate: Date, db: Db = prisma): Promise<DayBookMoneyFlowResult> {
+  const [entries, cashAccount, bankGroup, undeposited, unwithdrawn] = await Promise.all([
+    dayBook(fromDate, toDate, db),
+    db.ledgerAccount.findUnique({ where: { code: "1110" }, select: { id: true } }),
+    db.ledgerAccount.findUnique({ where: { code: "1120" }, select: { id: true } }),
+    db.ledgerAccount.findUnique({ where: { code: "1115" }, select: { id: true } }),
+    db.ledgerAccount.findUnique({ where: { code: "2165" }, select: { id: true } }),
+  ]);
+  const bankChildren = bankGroup
+    ? await db.ledgerAccount.findMany({ where: { parentId: bankGroup.id, isPostable: true }, select: { id: true } })
+    : [];
+  const cashLike = new Set(
+    [cashAccount?.id, undeposited?.id, unwithdrawn?.id, ...bankChildren.map((c) => c.id)].filter(
+      (id): id is string => !!id,
+    ),
+  );
+
+  const withFlow: DayBookMoneyFlowEntry[] = entries.map((entry) => {
+    // Net the cash-like side of the entry, don't sum its debits and credits
+    // separately — a transfer between two cash-like accounts (deposit,
+    // withdrawal, bank-to-bank, a cheque clearing) has a cash-like line on
+    // *both* sides, and summing them independently would show it as both
+    // equal Money In and Money Out instead of netting to the 0/0 the oracle
+    // shows. Only a genuine net change (the other side is non-cash-like —
+    // equity, AR, a loan account) becomes a one-sided Money In or Money Out.
+    let net = money(0);
+    for (const line of entry.lines) {
+      if (!cashLike.has(line.accountId)) continue;
+      net = add(net, sub(line.debit, line.credit));
+    }
+    return {
+      ...entry,
+      moneyIn: net.isPositive() ? net : money(0),
+      moneyOut: net.isNegative() ? net.negated() : money(0),
+    };
+  });
+
+  const totalIn = sum(withFlow.map((e) => e.moneyIn));
+  const totalOut = sum(withFlow.map((e) => e.moneyOut));
+  return { entries: withFlow, totalIn, totalOut, net: sub(totalIn, totalOut) };
+}
+
 // ------------------------------------------------------------ Cash Flow
 
 export type CashFlowBucket = { sourceType: string; inflow: Money; outflow: Money; net: Money };

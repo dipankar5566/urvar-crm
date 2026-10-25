@@ -14,8 +14,13 @@ const SECTIONS: ReportSection[] = [
   {
     title: "Transaction Report",
     reports: [
+      { href: "/accounting/reports/sale-report", title: "Sale Report", description: "Every sales invoice, with how much has been received and through which bank." },
+      { href: "/accounting/reports/purchase-report", title: "Purchase Report", description: "Every posted purchase invoice, with how much has been paid." },
+      { href: "/accounting/reports/all-transactions", title: "All Transactions Report", description: "Every sale, purchase, payment, expense and loan event, in one list." },
+      { href: "/accounting/reports/itemwise-transaction", title: "Itemwise Transaction Report", description: "Every sale, purchase and expense line — item, HSN, tax, discount." },
+      { href: "/accounting/reports/sale-purchase-by-party", title: "Sale/Purchase by Party", description: "Sale and purchase totals per customer or supplier." },
       { href: "/accounting/reports/trial-balance", title: "Trial Balance", description: "Every account's net balance as of a date." },
-      { href: "/accounting/reports/day-book", title: "Day Book", description: "Every posted entry, across every account, in the order it happened." },
+      { href: "/accounting/reports/day-book", title: "Day Book", description: "Every posted entry, across every account, in the order it happened, with Money In/Out." },
       { href: "/accounting/reports/ledger", title: "General Ledger", description: "One account's transaction history — also the cash book or bank book." },
       { href: "/accounting/reports/cash-flow", title: "Cash Flow", description: "Net movement through cash and the default bank account, by cause." },
       { href: "/accounting/reports/profit-and-loss", title: "Profit & Loss", description: "Income and expenses over a date range." },

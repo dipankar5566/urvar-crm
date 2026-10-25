@@ -117,11 +117,11 @@ Columns come from the exported Vyapar workbooks [X]. Every report takes a date r
 
 | ID | Report | Columns (Vyapar) | Source in Urvar |
 |---|---|---|---|
-| R1 | **Sale Report** | Date, Order No, Invoice No, Party Name, GSTIN, Party Phone, Transaction Type, Total Amount, Payment Type, Received Amount, Balance Due, Description, **one column per bank**; sheet 2 "Item Details" | SalesInvoice + allocations |
-| R2 | **Purchase Report** | Same columns, with Paid in place of Received | PurchaseInvoice + SupplierPaymentAllocation |
-| R3 | **All Transactions** | Date, Reference No, Party Name, Category Name, Type, Total, Payment Type, Paid, Received, Balance, Description; sheet 2 "Item Details" | Union of every posted document + cash/bank/loan events |
-| R4 | **Sale/Purchase by Party** and **by Party Group** | Party, Sale total, Purchase total (per Vyapar menu) | Needs a party-group field (D7) |
-| R5 | **Itemwise Transaction** | Item Details columns: Date, Invoice/Txn No, Party, Item, Item Code, HSN/SAC, Category, Challan/Order No, Qty, Unit, UnitPrice, Discount %, Discount, Tax %, Tax, Transaction Type, Amount | Invoice/purchase lines |
+| R1 | **Sale Report** ✅ | Date, Order No, Invoice No, Party Name, GSTIN, Party Phone, Transaction Type, Total Amount, Payment Type, Received Amount, Balance Due, Description, **one column per bank**; sheet 2 "Item Details" | `saleReport()` in `transaction-reports.ts` — SalesInvoice + ReceiptAllocation |
+| R2 | **Purchase Report** ✅ | Same columns, with Paid in place of Received. No per-bank columns — the oracle export doesn't carry them for purchases either. | `purchaseReport()` — PurchaseInvoice + SupplierPaymentAllocation |
+| R3 | **All Transactions** ✅ | Date, Reference No, Party Name, Category Name, Type, Total, Payment Type, Paid, Received, Balance, Description; sheet 2 "Item Details" | `allTransactionsReport()` — **scope corrected during step 2**: the exported oracle (`AllTransactionsReport_*.xlsx`) excludes pure cash/bank housekeeping (deposits, withdrawals, transfers, cash/bank adjustments, cheque deposit/withdraw) entirely — those are Day Book (R8) only. The "+ cash/bank/loan events" wording above was written before the oracle was captured; what's actually unioned is every sale, purchase, receipt, supplier payment, approved expense, loan disbursement and loan repayment. |
+| R4 | **Sale/Purchase by Party** ✅ (by Party Group deferred) | Party, Sale total, Purchase total (per Vyapar menu) | `salePurchaseByParty()` — "by Party" only; "by Party Group" needs a party-group field (D7), not built |
+| R5 | **Itemwise Transaction** ✅ | Item Details columns: Date, Invoice/Txn No, Party, Item, Item Code, HSN/SAC, Category, Challan/Order No, Qty, Unit, UnitPrice, Discount %, Discount, Tax %, Tax, Transaction Type, Amount | `itemwiseTransactionReport()` — Invoice/purchase/expense lines. HSN/Category come from the linked `Product` when a line has one (purchase lines have no HSN column of their own); a purchase line's Tax %/Tax are null (G14 — no per-line tax exists yet) |
 
 ### 3.2 Cash, bank, loan and journal reports
 
@@ -129,7 +129,7 @@ Columns come from the exported Vyapar workbooks [X]. Every report takes a date r
 |---|---|---|---|
 | R6 | **Bank Statement** (per bank) | Date, Transaction Details, Withdrawal, Deposit, Balance, Description; Total row | Compare with the existing `bank-report`; labels follow Vyapar ("[Cash Withdraw]", "To SBI Test", "[Payment-In] Cust A", "[Cheque Deposit] …", "[EMI Paid] …") |
 | R7 | **Cash in Hand statement** (Vyapar calls it "Cash Flow Report") | Date, Ref No, Name, Category, Type, Cash In, Cash Out, Running cash in hand, Description; Opening and Closing rows | Keep Urvar's `cashFlowSummary` as the real cash-flow statement; add this cash book alongside |
-| R8 | **Day Book** | Name, Ref No, Type, Payment Type, Total, Money In, Money Out, Description; Total and Net rows | Internal transfers show Money In/Out = 0 [X]. Check the existing `dayBook` |
+| R8 | **Day Book** ✅ (checked, not rebuilt) | Name, Ref No, Type, Payment Type, Total, Money In, Money Out, Description; Total and Net rows | `dayBookMoneyFlow()` wraps the existing `dayBook()` with Money In/Out — see the amendment below for the netting rule this forced |
 | R9 | **Loan Statement** | Date, Type, Amount, Ending Balance; summary: Opening Balance, Balance Due, Total Principal Paid, Total Interest Paid | Fee rows don't change the ending balance [X] |
 | R10 | **Loan Account Summary** | Per loan: lender, opening, paid principal and interest, balance | |
 | R11 | **Other Income** (overall / by category / by item) | Mirrors the Expense Category / Item reports | Needs an Other Income document or posting; D8 |
@@ -220,7 +220,7 @@ Expected figures (from Vyapar's own exports [X]):
 ## 7. Implementation order (Phase 3)
 
 1. G1 bank accounts, G2/G3 adjustments, G5 cheques (with R6 and R7).
-2. R1–R5 transaction reports; R8 Day Book check.
+2. ✅ R1–R5 transaction reports; R8 Day Book check (2026-10-25 — see the amendment below).
 3. G7 loans, R9/R10; R12 journal report.
 4. §3.4 export registry (retrofit all existing and new reports).
 5. G14 purchase GST data, then R13–R16 (GSTR-1/2/3B, SAC, tax rate).
@@ -239,3 +239,13 @@ REA round 7 showed that Vyapar has only **open** and **transferred** (deposited/
 - **No BOUNCED state:** a bounced cheque is reopened, then its receipt is cancelled. That re-opens the invoice.
 - **CANCELLED** means the cheque's receipt or payment was cancelled while the cheque was OPEN.
 - **Cancellation of a deposited or cleared cheque's document** is refused until the cheque is reopened.
+
+## Amendment 2026-10-25 (step 2): R1–R5 shipped; R8's Money In/Out netting rule; two structural differences confirmed by the oracle
+
+**Shipped:** `src/lib/accounting/transaction-reports.ts` (`saleReport`, `purchaseReport`, `allTransactionsReport`, `itemwiseTransactionReport`, `salePurchaseByParty`), report pages under `accounting/reports/{sale-report,purchase-report,all-transactions,itemwise-transaction,sale-purchase-by-party}`, `dayBookMoneyFlow()` in `financial-reports.ts` (wraps `dayBook()` with Vyapar's Money In/Out columns, now shown on the Day Book page), and `tests/vyapar-parity.test.ts` — a Vitest fixture recreating the REA Test Co scenario (§6) against the dev DB, checked against the exported oracle workbooks.
+
+**The Day Book's Money In/Out must be netted per entry, not summed per side.** The first implementation summed every cash-like line's debits into Money In and every cash-like line's credits into Money Out independently. For a pure transfer between two cash-like accounts (a deposit, withdrawal, bank-to-bank transfer, or a cheque clearing — both its lines are cash-like) this produced equal non-zero Money In *and* Money Out, where the oracle (`Daybook_*.xlsx`) shows literal `0`/`0`. The fix: net the cash-like lines first (`Σdebit − Σcredit`), then the net amount becomes Money In when positive, Money Out when negative — a transfer's net is always zero because both its legs are cash-like and cancel; a `BANK_ADJ_INCREASE`/`CASH_ADJUSTMENT`/receipt/loan-disbursement/loan-repayment entry nets to a genuine one-sided figure because only one of its two lines is cash-like. The test (`tests/vyapar-parity.test.ts`, "R8 Day Book check") locks this in per movement type.
+
+**Two structural differences the oracle made unambiguous (both already documented at the top of `transaction-reports.ts`), confirmed by building the actual fixture rather than reading the spec in the abstract:**
+1. A `SalesInvoice`/`PurchaseInvoice` never carries a payment — Vyapar's single-entry Sale/Purchase document can, and its Day Book/All Transactions rows show a non-zero Money In/Out or Payment Type directly on that one row. In Urvar the same money shows up as a *separate*, independently dated `Receipt`/`SupplierPayment` document — so where the fixture's oracle-equivalent scenario has 2 Payment-In and 1 Payment-Out rows, Urvar's `allTransactionsReport` correctly has 3 and 2 (the extra one is the payment that happens to be allocated to an invoice created the same day) — not a bug, the aggregate totals (received, paid, balance) agree exactly.
+2. `allTransactionsReport`'s Payment Type column is **frozen as recorded**, not re-resolved against a cheque's later clearing state — `"Cheque (111111)"` stays that label even after the cheque deposits, matching the oracle (which is generated once from Vyapar's `txn_payment_mapping` at document creation and never rewritten). `saleReport`/`purchaseReport`'s per-bank breakdown, by contrast, *does* re-resolve a cleared cheque to its eventual bank — a deliberately different, invoice-centric view with no oracle row to contradict it.
