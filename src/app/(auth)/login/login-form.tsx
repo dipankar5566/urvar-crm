@@ -38,7 +38,7 @@ export function LoginForm() {
   }
 
   return (
-    <Card>
+    <Card className="glass-strong">
       <CardHeader>
         <CardTitle>Sign in</CardTitle>
         <CardDescription>Enter your credentials to continue</CardDescription>

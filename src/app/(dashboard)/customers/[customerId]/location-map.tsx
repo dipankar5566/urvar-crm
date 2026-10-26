@@ -62,7 +62,7 @@ export default function LocationMap({
         <Circle
           center={value}
           radius={value.accuracy}
-          pathOptions={{ color: "#2563eb", fillOpacity: 0.1, weight: 1 }}
+          pathOptions={{ className: "stroke-brand fill-brand", fillOpacity: 0.1, weight: 1 }}
         />
       )}
       {value && (

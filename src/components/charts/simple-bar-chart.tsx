@@ -19,7 +19,7 @@ export function SimpleBarChart({
   data,
   dataKey,
   nameKey,
-  color = "#16a34a",
+  color = "var(--chart-1)",
   format = "number",
 }: {
   data: Record<string, unknown>[];
@@ -37,10 +37,18 @@ export function SimpleBarChart({
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-        <XAxis dataKey={nameKey} fontSize={12} tickLine={false} />
-        <YAxis fontSize={12} tickLine={false} tickFormatter={formatValue} />
-        <Tooltip formatter={(value) => formatValue(Number(value))} />
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+        <XAxis dataKey={nameKey} fontSize={12} tickLine={false} tick={{ fill: "var(--muted-foreground)" }} />
+        <YAxis fontSize={12} tickLine={false} tickFormatter={formatValue} tick={{ fill: "var(--muted-foreground)" }} />
+        <Tooltip
+          formatter={(value) => formatValue(Number(value))}
+          contentStyle={{
+            background: "var(--popover)",
+            border: "1px solid var(--glass-border)",
+            borderRadius: "var(--radius-md)",
+            color: "var(--popover-foreground)",
+          }}
+        />
         <Bar dataKey={dataKey} fill={color} radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>

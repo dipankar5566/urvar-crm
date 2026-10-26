@@ -50,7 +50,7 @@ export function Topbar({
   const openSearch = useGlobalSearch();
 
   return (
-    <header className="flex h-[45px] items-center gap-1 border-b bg-background px-4">
+    <header className="glass flex h-[45px] items-center gap-1 border-b bg-background/70 px-4">
       <MobileNavDrawer role={role} name={name} email={email} />
       {backHref && (
         <>

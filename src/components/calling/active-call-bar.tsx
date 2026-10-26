@@ -48,7 +48,7 @@ export function ActiveCallBar() {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-80 rounded-lg border bg-card shadow-lg">
+    <div className="fixed bottom-4 right-4 z-50 w-80 glass-strong rounded-xl border border-glass-border bg-card shadow-glass-lg">
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div>
           <p className="text-sm font-medium">

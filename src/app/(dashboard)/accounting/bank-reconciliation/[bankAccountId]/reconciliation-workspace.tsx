@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, inputClassName } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -99,7 +99,7 @@ export function ReconciliationWorkspace({
           <form method="GET" className="flex items-end gap-3">
             <div className="space-y-1">
               <Label htmlFor="asOf" className="text-xs text-muted-foreground">As of</Label>
-              <input id="asOf" name="asOf" type="date" defaultValue={asOf} className="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+              <input id="asOf" name="asOf" type="date" defaultValue={asOf} className={inputClassName} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="statementClosingBalance" className="text-xs text-muted-foreground">Statement closing balance (optional)</Label>
@@ -110,7 +110,7 @@ export function ReconciliationWorkspace({
                 step="0.01"
                 defaultValue={statementClosingBalance}
                 placeholder="From the paper/PDF statement"
-                className="h-9 w-64 rounded-md border border-input bg-background px-3 text-sm"
+                className={`${inputClassName} w-64`}
               />
             </div>
             <button type="submit" className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground">Update</button>
@@ -125,7 +125,7 @@ export function ReconciliationWorkspace({
             <Stat label="Unmatched" value={`${unmatchedLines.length} statement · ${unmatchedJournalLines.length} book`} isText />
           </div>
           {summary.adjustedStatementBalance !== null && summary.adjustedStatementBalance !== summary.adjustedBookBalance && (
-            <p className="text-xs text-amber-600">
+            <p className="text-xs text-warning">
               Not reconciled yet — adjusted book and adjusted statement balances differ. Match or action the remaining unmatched lines below.
             </p>
           )}

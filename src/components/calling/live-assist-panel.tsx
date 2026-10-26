@@ -94,7 +94,7 @@ function LiveAssistPanelInner({ callId }: { callId: string }) {
   }, [lines, suggestions]);
 
   return (
-    <div className="fixed bottom-4 right-[22rem] z-50 w-96 rounded-lg border bg-card shadow-lg">
+    <div className="fixed bottom-4 right-[22rem] z-50 w-96 glass-strong rounded-xl border border-glass-border bg-card shadow-glass-lg">
       <Card className="border-0 shadow-none">
         <CardHeader className="flex-row items-center justify-between space-y-0 border-b py-2">
           <div className="flex items-center gap-1.5 text-sm font-medium">

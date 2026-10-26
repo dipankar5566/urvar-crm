@@ -1,14 +1,14 @@
 /** Shared initials-avatar helpers for leads (table rows, kanban cards, dashboard panels). */
 
 const AVATAR_COLORS = [
-  "#2383E2",
-  "#9065B0",
-  "#C14C8A",
-  "#448361",
-  "#D9730D",
-  "#337EA4",
-  "#CB912F",
-  "#C4554D",
+  "var(--avatar-1)",
+  "var(--avatar-2)",
+  "var(--avatar-3)",
+  "var(--avatar-4)",
+  "var(--avatar-5)",
+  "var(--avatar-6)",
+  "var(--avatar-7)",
+  "var(--avatar-8)",
 ];
 
 export function initialsOf(name: string): string {
