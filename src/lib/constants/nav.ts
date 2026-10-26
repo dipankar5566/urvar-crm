@@ -52,6 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Inventory Valuation", href: "/accounting/inventory", icon: "Boxes", module: "accounting", section: "accounts" },
   { label: "Financial Reports", href: "/accounting/reports", icon: "LineChart", module: "accounting", section: "accounts" },
   { label: "Cash & Bank", href: "/accounting/cash-bank", icon: "Wallet2", module: "accounting", section: "accounts" },
+  { label: "Bank Reconciliation", href: "/accounting/bank-reconciliation", icon: "ListChecks", module: "accounting", section: "accounts" },
   { label: "Loans", href: "/accounting/loans", icon: "HandCoins", module: "accounting", section: "accounts" },
   { label: "Fixed Assets", href: "/accounting/fixed-assets", icon: "Warehouse", module: "accounting", section: "accounts" },
   // Gated by `gst`, not `accounting` — verifying a rate is a tax sign-off,

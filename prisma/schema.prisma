@@ -292,6 +292,10 @@ model User {
   loanTransactionsCreated    LoanTransaction[]      @relation("LoanTransactionCreator")
   fixedAssetsCreated         FixedAsset[]           @relation("FixedAssetCreator")
   depreciationEntriesCreated DepreciationEntry[]    @relation("DepreciationEntryCreator")
+  // Vyapar parity step 7 — bank reconciliation (§4) and Custom Report (§3.5).
+  bankStatementLinesImported BankStatementLine[]      @relation("BankStatementLineImporter")
+  bankStatementLinesMatched  BankStatementLine[]      @relation("BankStatementLineMatcher")
+  customReportDefinitions    CustomReportDefinition[] @relation("CustomReportDefinitionOwner")
 
   @@index([role])
 }
@@ -1403,6 +1407,11 @@ model JournalLine {
 
   createdAt DateTime @default(now())
 
+  /// Set once a bank reconciliation (VYAPAR_PARITY_SPEC.md §4) confirms this
+  /// line against an uploaded statement row. Back-relation only — the real
+  /// FK is BankStatementLine.matchedJournalLineId, which is @unique.
+  matchedByStatementLine BankStatementLine?
+
   @@index([entryId])
   @@index([accountId])
   @@index([partyType, partyId])
@@ -2289,10 +2298,19 @@ model BankAccount {
 
   isActive Boolean @default(true)
 
+  /// Bank reconciliation (VYAPAR_PARITY_SPEC.md §4). Logical field -> this
+  /// bank's statement column header, e.g. {"date":"Txn Date","withdrawal":
+  /// "Withdrawal Amt.","deposit":"Deposit Amt.","description":"Narration",
+  /// "reference":"Chq./Ref.No."}. Set on first import, reused (and editable)
+  /// on every one after — "map its columns once per bank".
+  statementColumnMap Json?
+
   createdById String
   createdBy   User     @relation("BankAccountCreator", fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  statementLines BankStatementLine[]
 
   @@index([isActive])
 }
@@ -2340,6 +2358,60 @@ model Cheque {
 
   @@index([status])
   @@index([direction])
+}
+
+enum BankStatementLineStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+}
+
+/// Bank reconciliation (VYAPAR_PARITY_SPEC.md §4) — Urvar's own design, not
+/// Vyapar parity: REA found no reconcile UI on the licensed test company,
+/// only decoded online-bank-linking constants with nothing to observe at
+/// runtime. One row per line of an uploaded bank statement; `importBatch`
+/// (a shared id stamped on every row from one upload) groups them so a bad
+/// upload can be undone before anything in it is matched. Matching never
+/// posts anything — it only links an already-posted `JournalLine` on this
+/// bank's ledger to the statement row that confirms it cleared.
+/// `matchedJournalLineId`'s uniqueness is the actual one-to-one invariant:
+/// the database itself refuses to let two statement lines claim the same
+/// journal line, not just the application code.
+model BankStatementLine {
+  id String @id @default(cuid())
+
+  bankAccountId String
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  /// Groups every row from one upload. Not a separate import-batch model —
+  /// there is nothing else to say about a batch beyond "these rows arrived
+  /// together", so a shared id on the line is enough to list, and delete, it.
+  importBatch String
+
+  txnDate     DateTime
+  description String
+  reference   String?
+  /// Money out of the account, per the statement. Exactly one of
+  /// withdrawal/deposit is non-zero, same convention JournalLine's own
+  /// debit/credit split uses.
+  withdrawal Decimal @default(0) @db.Decimal(14, 2)
+  deposit    Decimal @default(0) @db.Decimal(14, 2)
+
+  status BankStatementLineStatus @default(UNMATCHED)
+
+  matchedJournalLineId String?      @unique
+  matchedJournalLine   JournalLine? @relation(fields: [matchedJournalLineId], references: [id])
+  matchedAt            DateTime?
+  matchedById          String?
+  matchedBy            User?        @relation("BankStatementLineMatcher", fields: [matchedById], references: [id])
+
+  createdById String
+  createdBy   User     @relation("BankStatementLineImporter", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([bankAccountId, status])
+  @@index([txnDate])
+  @@index([importBatch])
 }
 
 /// A cash/bank movement not already captured by a Receipt, Expense or
@@ -2603,4 +2675,30 @@ model DepreciationEntry {
 
   @@index([fixedAssetId, financialYear])
   @@index([fixedAssetId])
+}
+
+/// Custom Report (VYAPAR_PARITY_SPEC.md §3.5) — a saved column/filter
+/// selection over `allTransactionsReport()`'s dataset (R3's own rows, never
+/// a separate query). This model stores nothing but the user's last pick;
+/// `custom-report.ts` re-runs the real report every time one is loaded.
+model CustomReportDefinition {
+  id   String @id @default(cuid())
+  name String
+
+  /// Keys into `AllTransactionsRow`, e.g. ["date","partyName","total"].
+  columns String[]
+
+  /// All optional. An empty array / null means "don't filter on this".
+  transactionTypes String[] @default([])
+  partyContains    String?
+  minAmount        Decimal? @db.Decimal(14, 2)
+  maxAmount        Decimal? @db.Decimal(14, 2)
+
+  createdById String
+  createdBy   User   @relation("CustomReportDefinitionOwner", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
 }

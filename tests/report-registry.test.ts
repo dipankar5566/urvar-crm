@@ -41,7 +41,7 @@ describe("vyaparFilename()", () => {
 describe("REPORT_REGISTRY — every entry is registered with a consistent shape", () => {
   it("has 36 reports, each with a non-empty title and at least one need declared or none", () => {
     const ids = Object.keys(REPORT_REGISTRY);
-    expect(ids.length).toBe(39);
+    expect(ids.length).toBe(40);
     for (const id of ids) {
       const entry = REPORT_REGISTRY[id];
       expect(entry.id).toBe(id);
@@ -177,7 +177,7 @@ describe("REPORT_REGISTRY — every range/asOf-only report loads without error a
     await withRollback(async (tx) => {
       const date = await openPeriodDate(tx);
       for (const [id, entry] of Object.entries(REPORT_REGISTRY)) {
-        if (entry.needs.some((n) => n === "accountId" || n === "partyId" || n === "partyType" || n === "loanId")) continue;
+        if (entry.needs.some((n) => n === "accountId" || n === "partyId" || n === "partyType" || n === "loanId" || n === "custom")) continue;
         const params = entry.needs.includes("asOf") ? { asOf: date } : { from: date, to: date };
         await expect(entry.load(params, tx), id).resolves.toBeDefined();
       }

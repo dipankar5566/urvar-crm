@@ -30,6 +30,7 @@ const SECTIONS: ReportSection[] = [
       { href: "/accounting/reports/bill-wise-profit", title: "Bill Wise Profit", description: "Estimated margin per invoice — an estimate, never posted to the ledger." },
       { href: "/accounting/reports/sales-aging", title: "Sales Aging", description: "Every open sales invoice individually, bucketed by days past due." },
       { href: "/accounting/reports/balance-sheet", title: "Balance Sheet", description: "Assets, liabilities and equity as of a date." },
+      { href: "/accounting/reports/custom-report", title: "Custom Report", description: "Pick your own columns and filters over the All Transactions Report's dataset. Save a definition to reuse it." },
     ],
   },
   {

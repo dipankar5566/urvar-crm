@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { closePeriod, reopenPeriod, lockPeriod, openFinancialYear } from "../actions";
+import { closePeriod, reopenPeriod, lockPeriod, openFinancialYear, closeBooks } from "../actions";
 
 type Status = "OPEN" | "CLOSED" | "LOCKED";
 type Result = { error: string } | { success: true };
@@ -73,6 +73,32 @@ export function PeriodRowActions({
         </Button>
       )}
     </div>
+  );
+}
+
+export function CloseBooksButton({ financialYear, label }: { financialYear: number; label: string }) {
+  const [pending, start] = useTransition();
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={pending}
+      onClick={() => {
+        const warning =
+          `Close the books for FY ${label}?\n\n` +
+          `Every period in this year will be locked permanently — nothing will ever be able to ` +
+          `post into it or reopen it again. Only do this once every period has been reviewed and closed.`;
+        if (!window.confirm(warning)) return;
+        start(async () => {
+          const result = await closeBooks(financialYear);
+          if ("error" in result) toast.error(result.error);
+          else toast.success(`FY ${label} closed.`);
+        });
+      }}
+    >
+      Close Books
+    </Button>
   );
 }
 

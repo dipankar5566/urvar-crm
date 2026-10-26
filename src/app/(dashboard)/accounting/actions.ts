@@ -7,6 +7,8 @@ import { assertCan } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit";
 import { requireCompany } from "@/lib/accounting/company";
 import { periodsForYear, financialYearLabel } from "@/lib/accounting/fiscal";
+import { profitAndLoss } from "@/lib/accounting/financial-reports";
+import { toAmountString } from "@/lib/accounting/money";
 
 type ActionResult = { error: string } | { success: true };
 
@@ -113,6 +115,82 @@ export async function lockPeriod(periodId: string): Promise<ActionResult> {
         entityId: periodId,
         oldValue: { status: period.status },
         newValue: { status: "LOCKED", label: period.label },
+      },
+      tx,
+    );
+  });
+
+  revalidatePath("/accounting/periods");
+  return { success: true };
+}
+
+/**
+ * Close Books (docs/VYAPAR_PARITY_SPEC.md §3.5) — a year-end action that
+ * locks every one of a financial year's twelve periods in one step, instead
+ * of a Super Admin clicking Lock twelve times.
+ *
+ * Deliberately does **not** post a journal entry moving the year's net
+ * profit into Retained Earnings (3200), unlike Vyapar's own year-end close.
+ * Vyapar is single-entry and stores a running balance per account, so it
+ * needs an explicit transfer to roll last year's profit out of "current
+ * year" and into retained earnings before the new year starts clean.
+ * `balanceSheet()` already computes "Current Earnings" as cumulative
+ * Income − Expenses since inception (see its own docstring) — a plug that
+ * is always correct for every FY without anything being moved. Posting a
+ * literal closing entry here would zero out the very INCOME/EXPENSE lines
+ * `profitAndLoss()` sums over a date range, so reopening a prior year's P&L
+ * report after closing it would show nothing. The net profit this
+ * computes is a read-only snapshot for the audit trail and the Periods
+ * page, matching Vyapar's user-visible result (the year's profit is
+ * reviewable and the year is sealed) without the stored-balance mechanism
+ * that produces it in Vyapar.
+ *
+ * Requires every period in the FY to already be CLOSED (reviewed month by
+ * month) before it will lock the year — it does not silently close an OPEN
+ * period on the caller's behalf.
+ */
+export async function closeBooks(financialYear: number): Promise<ActionResult> {
+  const user = await requireUser();
+  assertCan(user.role, "accounting", "approve");
+  if (user.role !== "SUPER_ADMIN") {
+    return { error: "Only a Super Admin can close the books for a financial year." };
+  }
+
+  const company = await requireCompany();
+  const periods = await prisma.financialPeriod.findMany({ where: { companyId: company.id, financialYear } });
+  const label = financialYearLabel(financialYear, company.fyStartMonth);
+  if (periods.length === 0) return { error: `FY ${label} has not been opened.` };
+  if (periods.every((p) => p.status === "LOCKED")) return { error: `FY ${label} is already closed.` };
+
+  const stillOpen = periods.filter((p) => p.status === "OPEN");
+  if (stillOpen.length > 0) {
+    return {
+      error: `Close every period first: ${stillOpen.map((p) => p.label).join(", ")} ${stillOpen.length === 1 ? "is" : "are"} still open.`,
+    };
+  }
+
+  const fyStart = periods.reduce((min, p) => (p.startDate < min ? p.startDate : min), periods[0].startDate);
+  const fyEnd = periods.reduce((max, p) => (p.endDate > max ? p.endDate : max), periods[0].endDate);
+  const pnl = await profitAndLoss(fyStart, fyEnd);
+
+  await prisma.$transaction(async (tx) => {
+    for (const p of periods) {
+      await tx.financialPeriod.update({
+        where: { id: p.id },
+        data: { status: "LOCKED", closedAt: p.closedAt ?? new Date(), closedById: p.closedById ?? user.id },
+      });
+    }
+    await logAudit(
+      {
+        userId: user.id,
+        action: "CLOSE_BOOKS",
+        entityType: "FinancialPeriod",
+        entityId: `FY${financialYear}`,
+        newValue: {
+          financialYear: label,
+          periodsLocked: periods.length,
+          netProfit: toAmountString(pnl.netProfit),
+        },
       },
       tx,
     );

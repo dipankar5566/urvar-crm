@@ -37,6 +37,7 @@ import {
 import { saleReport, purchaseReport, allTransactionsReport, itemwiseTransactionReport, salePurchaseByParty } from "./transaction-reports";
 import { loanStatement, loanAccountSummary } from "./loans";
 import { gstr1Report, gstr2Report, gstr3bReport, gstTaxRateReport } from "./gstr-reports";
+import { runCustomReport } from "./custom-report";
 import { toAmountString, type MoneyInput } from "./money";
 
 /**
@@ -73,9 +74,17 @@ export type ReportParams = {
   partyId?: string;
   partyType?: "CUSTOMER" | "SUPPLIER";
   loanId?: string;
+  /** Custom Report (§3.5) — a user's column/filter pick over R3's dataset. Not stored here; see custom-report.ts. */
+  custom?: {
+    columns: string[];
+    transactionTypes?: string[];
+    partyContains?: string;
+    minAmount?: string;
+    maxAmount?: string;
+  };
 };
 
-export type ReportNeed = "range" | "asOf" | "accountId" | "partyId" | "partyType" | "loanId";
+export type ReportNeed = "range" | "asOf" | "accountId" | "partyId" | "partyType" | "loanId" | "custom";
 
 export type ReportDefinition = {
   id: string;
@@ -629,6 +638,29 @@ export const REPORT_REGISTRY: Record<string, ReportDefinition> = {
   gstr2: { id: "gstr2", title: "GSTR-2", needs: ["range"], load: ({ from, to }, db) => gstr2Report(from!, to!, db) },
   gstr3b: { id: "gstr3b", title: "GSTR-3B", needs: ["range"], load: ({ from, to }, db) => gstr3bReport(from!, to!, db) },
   "gst-tax-rate": { id: "gst-tax-rate", title: "GST Tax Rate Report", needs: [], load: (_params, db) => gstTaxRateReport(db) },
+
+  // ---------------------------------------------------------------- Custom Report (step 7, §3.5)
+
+  "custom-report": {
+    id: "custom-report",
+    title: "Custom Report",
+    needs: ["range", "custom"],
+    load: async ({ from, to, custom }, db) => {
+      const result = await runCustomReport(
+        from!,
+        to!,
+        custom!.columns,
+        {
+          transactionTypes: custom!.transactionTypes,
+          partyContains: custom!.partyContains,
+          minAmount: custom!.minAmount,
+          maxAmount: custom!.maxAmount,
+        },
+        db,
+      );
+      return [{ name: "Custom Report", rows: result.rows }];
+    },
+  },
 };
 
 /** The Item Details sheet shape every R1/R2/R3 export shares, lifted from R5's own columns. */

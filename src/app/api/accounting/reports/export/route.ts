@@ -29,6 +29,7 @@ export async function GET(req: Request) {
   const get = (key: string) => url.searchParams.get(key) ?? undefined;
   const parseDate = (v: string | undefined) => (v ? new Date(v) : undefined);
 
+  const columns = url.searchParams.get("columns");
   const params: ReportParams = {
     from: parseDate(get("from")),
     to: parseDate(get("to")),
@@ -37,6 +38,15 @@ export async function GET(req: Request) {
     partyId: get("partyId"),
     partyType: get("partyType") === "SUPPLIER" ? "SUPPLIER" : get("partyType") === "CUSTOMER" ? "CUSTOMER" : undefined,
     loanId: get("loanId"),
+    custom: columns
+      ? {
+          columns: columns.split(","),
+          transactionTypes: get("types")?.split(",").filter(Boolean),
+          partyContains: get("partyContains"),
+          minAmount: get("minAmount"),
+          maxAmount: get("maxAmount"),
+        }
+      : undefined,
   };
 
   for (const need of entry.needs) {
@@ -46,6 +56,7 @@ export async function GET(req: Request) {
     if (need === "partyId" && !params.partyId) return new NextResponse("Missing partyId", { status: 400 });
     if (need === "partyType" && !params.partyType) return new NextResponse("Missing partyType", { status: 400 });
     if (need === "loanId" && !params.loanId) return new NextResponse("Missing loanId", { status: 400 });
+    if (need === "custom" && !params.custom) return new NextResponse("Missing columns", { status: 400 });
   }
 
   let sheets;
