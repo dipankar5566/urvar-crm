@@ -1,4 +1,5 @@
-const inputClass = "h-9 rounded-md border border-input bg-background px-3 text-sm";
+const inputClass =
+  "h-9 rounded-md border border-input bg-card/50 px-3 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:bg-card/80 focus-visible:ring-3 focus-visible:ring-ring/50";
 const buttonClass = "h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground";
 
 export function isoDate(d: Date): string {

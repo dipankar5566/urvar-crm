@@ -48,7 +48,7 @@ export function UserMenu({
         )}
       >
         <Avatar className={mode === "compact" ? "h-7 w-7" : "h-7 w-7 shrink-0"}>
-          <AvatarFallback className="bg-[#2383E2] text-xs text-white">
+          <AvatarFallback className="bg-brand-solid text-xs text-brand-foreground">
             {initials}
           </AvatarFallback>
         </Avatar>

@@ -331,14 +331,14 @@ export function RecordReceiptForm({
             )}
 
             {overAllocated && (
-              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 Allocated {inr(allocatedTotal)} is more than the amount received, {inr(amountNum)}.
                 Reduce an allocation or increase the amount.
               </p>
             )}
 
             {!overAllocated && advance > 0 && invoices.length > 0 && (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              <p className="rounded-md border border-warning/30 bg-warning-muted px-3 py-2 text-sm text-warning">
                 {inr(advance)} isn&apos;t allocated to any invoice and will be recorded as an advance
                 from the customer. The invoices above stay unpaid to that extent.
               </p>

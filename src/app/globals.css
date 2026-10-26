@@ -40,7 +40,39 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-brand: var(--brand);
+  --color-brand-solid: var(--brand-solid);
+  --color-brand-foreground: var(--brand-foreground);
   --color-tertiary-foreground: var(--tertiary-foreground);
+
+  /* Semantic status colors (replace raw Tailwind palette classes at call sites) */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-muted: var(--warning-muted);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-muted: var(--info-muted);
+  --color-overlay: var(--overlay);
+
+  /* Receivables ageing scale (oldest = most alarming) */
+  --color-aging-1: var(--aging-1);
+  --color-aging-2: var(--aging-2);
+  --color-aging-3: var(--aging-3);
+  --color-aging-4: var(--aging-4);
+  --color-aging-5: var(--aging-5);
+
+  /* Avatar initials background scale (lib/avatar.ts) */
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-5: var(--avatar-5);
+  --color-avatar-6: var(--avatar-6);
+  --color-avatar-7: var(--avatar-7);
+  --color-avatar-8: var(--avatar-8);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -48,113 +80,251 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  --shadow-glass-sm: var(--shadow-glass-sm);
+  --shadow-glass-md: var(--shadow-glass-md);
+  --shadow-glass-lg: var(--shadow-glass-lg);
 }
 
 :root {
+  /* Liquid-glass backdrop: the mesh every glass surface floats over.
+     --background stays the opaque, no-blur fallback color. */
+  --backdrop: radial-gradient(
+      ellipse 70% 55% at 12% -8%,
+      rgba(35, 131, 226, 0.14),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 100% 0%,
+      rgba(144, 101, 176, 0.12),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 80% 60% at 50% 100%,
+      rgba(68, 131, 97, 0.08),
+      transparent 60%
+    );
+
   --background: #FFFFFF;
   --foreground: #37352F;
-  --card: #FFFFFF;
+  --card: rgb(255 255 255 / 0.72);
   --card-foreground: #37352F;
-  --popover: #FFFFFF;
+  --popover: rgb(255 255 255 / 0.82);
   --popover-foreground: #37352F;
   --primary: #37352F;
   --primary-foreground: #FFFFFF;
-  --secondary: #F1F1EF;
+  --secondary: rgb(241 241 239 / 0.75);
   --secondary-foreground: #37352F;
-  --muted: #F1F1EF;
-  --muted-foreground: #787774;
+  --muted: rgb(241 241 239 / 0.65);
+  --muted-foreground: #6A6967;
   --accent: rgba(55, 53, 47, 0.08);
   --accent-foreground: #37352F;
-  --destructive: #C4554D;
-  --border: rgba(55, 53, 47, 0.09);
-  --input: rgba(55, 53, 47, 0.09);
+  --destructive: #AC4A43;
+  --border: rgba(55, 53, 47, 0.12);
+  --input: rgba(55, 53, 47, 0.14);
   --ring: #2383E2;
   --brand: #2383E2;
-  --tertiary-foreground: #AEACAA;
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.5rem;
-  --sidebar: #F7F6F3;
+  --brand-solid: #2077CD;
+  --brand-foreground: #FFFFFF;
+  --tertiary-foreground: #6A6968;
+  --chart-1: #2383E2;
+  --chart-2: #9065B0;
+  --chart-3: #448361;
+  --chart-4: #D9730D;
+  --chart-5: #C14C8A;
+  --radius: 0.75rem;
+
+  --sidebar: rgb(247 246 243 / 0.6);
   --sidebar-foreground: #37352F;
   --sidebar-primary: #37352F;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: rgba(55, 53, 47, 0.08);
   --sidebar-accent-foreground: #37352F;
-  --sidebar-border: rgba(55, 53, 47, 0.09);
+  --sidebar-border: rgba(55, 53, 47, 0.12);
   --sidebar-ring: #2383E2;
 
-  --status-new-bg: rgba(227, 226, 224, 0.8);
-  --status-new-fg: #787774;
-  --status-contacted-bg: rgba(211, 229, 239, 0.8);
-  --status-contacted-fg: #337EA4;
-  --status-interested-bg: rgba(253, 236, 200, 0.8);
-  --status-interested-fg: #CB912F;
-  --status-follow_up-bg: rgba(250, 222, 201, 0.8);
-  --status-follow_up-fg: #D9730D;
-  --status-quotation_sent-bg: rgba(232, 222, 255, 0.8);
-  --status-quotation_sent-fg: #9065B0;
-  --status-negotiation-bg: rgba(245, 224, 233, 0.8);
-  --status-negotiation-fg: #C14C8A;
-  --status-won-bg: rgba(219, 237, 219, 0.8);
-  --status-won-fg: #448361;
-  --status-lost-bg: rgba(255, 226, 221, 0.8);
-  --status-lost-fg: #C4554D;
+  /* Glass material */
+  --glass: rgb(255 255 255 / 0.55);
+  --glass-strong: rgb(255 255 255 / 0.78);
+  --glass-border: rgb(255 255 255 / 0.6);
+  --glass-highlight: rgb(255 255 255 / 0.8);
+  --glass-blur: 20px;
+  --glass-blur-strong: 28px;
+  --glass-saturate: 180%;
+  --overlay: rgba(40, 46, 60, 0.18);
+
+  --shadow-glass-sm: 0 1px 2px rgba(23, 32, 48, 0.06), 0 6px 16px -8px rgba(23, 32, 48, 0.12),
+    inset 0 1px 0 var(--glass-highlight);
+  --shadow-glass-md: 0 2px 4px rgba(23, 32, 48, 0.07), 0 12px 28px -10px rgba(23, 32, 48, 0.16),
+    inset 0 1px 0 var(--glass-highlight);
+  --shadow-glass-lg: 0 4px 8px rgba(23, 32, 48, 0.08), 0 24px 48px -16px rgba(23, 32, 48, 0.22),
+    inset 0 1px 0 var(--glass-highlight);
+
+  /* Semantic status colors */
+  --success: #0F6F32;
+  --success-foreground: #FFFFFF;
+  --success-muted: rgba(16, 121, 55, 0.12);
+  --warning: #8E4E04;
+  --warning-foreground: #FFFFFF;
+  --warning-muted: rgba(217, 119, 6, 0.14);
+  --info: #1D6BB8;
+  --info-foreground: #FFFFFF;
+  --info-muted: rgba(35, 131, 226, 0.12);
+
+  --aging-1: #448361;
+  --aging-2: #CB912F;
+  --aging-3: #D9730D;
+  --aging-4: #C4554D;
+  --aging-5: #8A2E27;
+
+  --avatar-1: #2077CD;
+  --avatar-2: #8E63AD;
+  --avatar-3: #BE4B88;
+  --avatar-4: #438160;
+  --avatar-5: #B35F0B;
+  --avatar-6: #327CA2;
+  --avatar-7: #986D23;
+  --avatar-8: #BF534B;
+
+  --status-new-bg: rgba(227, 226, 224, 0.75);
+  --status-new-fg: #656562;
+  --status-contacted-bg: rgba(211, 229, 239, 0.75);
+  --status-contacted-fg: #2B6B8B;
+  --status-interested-bg: rgba(253, 236, 200, 0.75);
+  --status-interested-fg: #8A6320;
+  --status-follow_up-bg: rgba(250, 222, 201, 0.75);
+  --status-follow_up-fg: #9A5209;
+  --status-quotation_sent-bg: rgba(232, 222, 255, 0.75);
+  --status-quotation_sent-fg: #7A5696;
+  --status-negotiation-bg: rgba(245, 224, 233, 0.75);
+  --status-negotiation-fg: #A64177;
+  --status-won-bg: rgba(219, 237, 219, 0.75);
+  --status-won-fg: #3B7254;
+  --status-lost-bg: rgba(255, 226, 221, 0.75);
+  --status-lost-fg: #AA4A43;
 }
 
 .dark {
+  --backdrop: radial-gradient(
+      ellipse 70% 55% at 12% -8%,
+      rgba(82, 156, 202, 0.16),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 100% 0%,
+      rgba(159, 111, 200, 0.14),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 80% 60% at 50% 100%,
+      rgba(77, 171, 154, 0.09),
+      transparent 60%
+    );
+
   --background: #191919;
   --foreground: #FFFFFE;
-  --card: #252525;
+  --card: rgb(37 37 40 / 0.68);
   --card-foreground: #FFFFFE;
-  --popover: #252525;
+  --popover: rgb(32 32 36 / 0.82);
   --popover-foreground: #FFFFFE;
   --primary: #FFFFFE;
   --primary-foreground: #191919;
-  --secondary: #2C2C2C;
+  --secondary: rgb(44 44 44 / 0.7);
   --secondary-foreground: #FFFFFE;
-  --muted: #2C2C2C;
+  --muted: rgb(44 44 44 / 0.6);
   --muted-foreground: #9B9A97;
-  --accent: rgba(255, 255, 255, 0.055);
+  --accent: rgba(255, 255, 255, 0.07);
   --accent-foreground: #FFFFFE;
   --destructive: #FF7369;
-  --border: rgba(255, 255, 255, 0.07);
-  --input: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.12);
   --ring: #529CCA;
   --brand: #529CCA;
-  --tertiary-foreground: #5A5A5A;
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: #202020;
+  --brand-solid: #4AA0E0;
+  --brand-foreground: #0B1220;
+  --tertiary-foreground: #989898;
+  --chart-1: #529CCA;
+  --chart-2: #9F6FC8;
+  --chart-3: #4DAB9A;
+  --chart-4: #FFA344;
+  --chart-5: #E255A1;
+
+  --sidebar: rgb(24 24 27 / 0.55);
   --sidebar-foreground: #FFFFFE;
   --sidebar-primary: #FFFFFE;
   --sidebar-primary-foreground: #191919;
-  --sidebar-accent: rgba(255, 255, 255, 0.055);
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
   --sidebar-accent-foreground: #FFFFFE;
-  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-border: rgba(255, 255, 255, 0.1);
   --sidebar-ring: #529CCA;
 
-  --status-new-bg: rgba(71, 71, 71, 0.8);
-  --status-new-fg: #9B9A97;
-  --status-contacted-bg: rgba(19, 60, 80, 0.8);
-  --status-contacted-fg: #5DA4C8;
-  --status-interested-bg: rgba(67, 49, 9, 0.8);
+  --glass: rgb(32 32 36 / 0.55);
+  --glass-strong: rgb(30 30 34 / 0.8);
+  --glass-border: rgb(255 255 255 / 0.1);
+  --glass-highlight: rgb(255 255 255 / 0.08);
+  --overlay: rgba(0, 0, 0, 0.45);
+
+  --shadow-glass-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px -8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 var(--glass-highlight);
+  --shadow-glass-md: 0 2px 4px rgba(0, 0, 0, 0.32), 0 12px 28px -10px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 var(--glass-highlight);
+  --shadow-glass-lg: 0 4px 8px rgba(0, 0, 0, 0.35), 0 24px 48px -16px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 var(--glass-highlight);
+
+  --success: #45C474;
+  --success-foreground: #04170B;
+  --success-muted: rgba(57, 192, 107, 0.16);
+  --warning: #FBBF24;
+  --warning-foreground: #241A02;
+  --warning-muted: rgba(251, 191, 36, 0.16);
+  --info: #579FCC;
+  --info-foreground: #05131F;
+  --info-muted: rgba(82, 156, 202, 0.16);
+
+  --aging-1: #4DAB9A;
+  --aging-2: #D9A84E;
+  --aging-3: #FFA344;
+  --aging-4: #FF7369;
+  --aging-5: #E0463A;
+
+  --avatar-1: #407A9F;
+  --avatar-2: #8E63B2;
+  --avatar-3: #C04889;
+  --avatar-4: #3A8073;
+  --avatar-5: #907034;
+  --avatar-6: #467B96;
+  --avatar-7: #92702E;
+  --avatar-8: #BB554D;
+
+  --status-new-bg: rgba(71, 71, 71, 0.75);
+  --status-new-fg: #B1B0AD;
+  --status-contacted-bg: rgba(19, 60, 80, 0.75);
+  --status-contacted-fg: #64A8CA;
+  --status-interested-bg: rgba(67, 49, 9, 0.75);
   --status-interested-fg: #D9A84E;
-  --status-follow_up-bg: rgba(66, 30, 3, 0.8);
+  --status-follow_up-bg: rgba(66, 30, 3, 0.75);
   --status-follow_up-fg: #FFA344;
-  --status-quotation_sent-bg: rgba(44, 27, 73, 0.8);
-  --status-quotation_sent-fg: #9F6FC8;
-  --status-negotiation-bg: rgba(70, 12, 42, 0.8);
-  --status-negotiation-fg: #E255A1;
-  --status-won-bg: rgba(10, 59, 31, 0.8);
+  --status-quotation_sent-bg: rgba(44, 27, 73, 0.75);
+  --status-quotation_sent-fg: #A87CCD;
+  --status-negotiation-bg: rgba(70, 12, 42, 0.75);
+  --status-negotiation-fg: #E35AA4;
+  --status-won-bg: rgba(10, 59, 31, 0.75);
   --status-won-fg: #4DAB9A;
-  --status-lost-bg: rgba(82, 16, 10, 0.8);
+  --status-lost-bg: rgba(82, 16, 10, 0.75);
   --status-lost-fg: #FF7369;
+}
+
+/* Liquid-glass material. Backgrounds stay on the semantic tokens above
+   (bg-card/bg-popover/bg-sidebar) — these utilities add only the blur,
+   saturation and depth so there is one background source of truth. */
+@utility glass {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-glass-sm);
+}
+
+@utility glass-strong {
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-glass-lg);
 }
 
 @layer base {
@@ -163,8 +333,66 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image: var(--backdrop);
+    background-attachment: fixed;
+    background-size: cover;
   }
   html {
     @apply font-sans;
+  }
+
+  /* No backdrop-filter support: fall back to fully opaque surfaces instead
+     of a half-transparent panel with no blur behind it. */
+  @supports not (backdrop-filter: blur(1px)) {
+    :root {
+      --card: #FFFFFF;
+      --popover: #FFFFFF;
+      --sidebar: #F7F6F3;
+      --glass: #FFFFFF;
+      --glass-strong: #FFFFFF;
+    }
+    .dark {
+      --card: #252525;
+      --popover: #202020;
+      --sidebar: #202020;
+      --glass: #202020;
+      --glass-strong: #202020;
+    }
+  }
+
+  /* Respect the OS "reduce transparency" preference the same way. */
+  @media (prefers-reduced-transparency: reduce) {
+    :root {
+      --card: #FFFFFF;
+      --popover: #FFFFFF;
+      --sidebar: #F7F6F3;
+      --glass: #FFFFFF;
+      --glass-strong: #FFFFFF;
+      --backdrop: #F3F5F9;
+    }
+    .dark {
+      --card: #252525;
+      --popover: #202020;
+      --sidebar: #202020;
+      --glass: #202020;
+      --glass-strong: #202020;
+      --backdrop: #191919;
+    }
+    .glass,
+    .glass-strong {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

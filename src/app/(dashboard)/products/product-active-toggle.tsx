@@ -31,7 +31,7 @@ export function ProductActiveToggle({
 
   return (
     <Button size="icon" variant="ghost" onClick={toggle} disabled={isPending}>
-      <Power className={isActive ? "h-4 w-4 text-destructive" : "h-4 w-4 text-emerald-600"} />
+      <Power className={isActive ? "h-4 w-4 text-destructive" : "h-4 w-4 text-success"} />
     </Button>
   );
 }

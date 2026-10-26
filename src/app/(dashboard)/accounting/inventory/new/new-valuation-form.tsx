@@ -154,7 +154,7 @@ export function NewValuationForm({ periods, products }: { periods: Period[]; pro
                       onChange={(e) => setUnitCostOverrides((c) => ({ ...c, [p.id]: e.target.value }))}
                     />
                     {!p.suggestedUnitCost && (
-                      <p className="mt-1 text-xs text-amber-600">
+                      <p className="mt-1 text-xs text-warning">
                         No purchase history — a manual cost is required for this line.
                       </p>
                     )}

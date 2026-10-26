@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { reverseManualEntryAction } from "./actions";
+import { inputClassName } from "@/components/ui/input";
 
 /** Follows accounting/periods/period-actions.tsx's exact shape. */
 export function ReverseEntryButton({ entryId }: { entryId: string }) {
@@ -42,7 +43,7 @@ export function ReverseEntryButton({ entryId }: { entryId: string }) {
         placeholder="Reason for reversal"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
-        className="h-7 w-48 rounded-md border border-input bg-background px-2 text-xs"
+        className={inputClassName}
       />
       <Button size="xs" variant="destructive" disabled={pending || reason.trim().length < 3} onClick={submit}>
         {pending ? "Reversing…" : "Confirm"}

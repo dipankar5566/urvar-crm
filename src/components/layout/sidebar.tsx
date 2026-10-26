@@ -117,8 +117,8 @@ export function Sidebar({
   const openSearch = useGlobalSearch();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar md:flex">
-      <div className="flex h-[45px] items-center gap-2 border-b px-2.5">
+    <aside className="glass hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+      <div className="flex h-[45px] items-center gap-2 border-b border-sidebar-border px-2.5">
         <Image src="/urvar-icon.png" alt="Urvar" width={28} height={28} className="rounded-md" />
         <span className="text-sm font-semibold">Urvar CRM</span>
       </div>
@@ -139,7 +139,7 @@ export function Sidebar({
 
       <NavLinks role={role} />
 
-      <div className="border-t p-1.5">
+      <div className="border-t border-sidebar-border p-1.5">
         <UserMenu name={name} email={email} role={role} mode="expanded" />
       </div>
     </aside>

@@ -107,21 +107,14 @@ export async function AlertsStrip({ user }: { user: User }) {
   if (alerts.length === 0) return null;
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-md px-3.5 py-2.5 text-sm"
-      style={{
-        background: "rgba(255,167,52,0.1)",
-        border: "1px solid rgba(255,167,52,0.3)",
-        color: "#D9730D",
-      }}
-    >
+    <div className="glass flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning-muted px-3.5 py-2.5 text-sm text-warning">
       <AlertTriangle className="h-4 w-4 shrink-0" />
       <span className="font-semibold">Needs attention</span>
       {alerts.map((a) => (
         <Link
           key={a.key}
           href={a.href}
-          className="rounded-full border border-current/30 px-2.5 py-0.5 text-xs font-medium hover:bg-black/5"
+          className="rounded-full border border-current/30 px-2.5 py-0.5 text-xs font-medium hover:bg-warning/10"
         >
           {a.count} {a.label}
           {a.count === 1 ? "" : "s"}

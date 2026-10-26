@@ -10,7 +10,7 @@ import { DASHBOARD_PERIODS, type DashboardPeriodKey } from "./period";
 export function PeriodSelect({ active }: { active: DashboardPeriodKey }) {
   return (
     <div
-      className="inline-flex rounded-md border bg-background p-0.5"
+      className="glass inline-flex rounded-md border bg-card/60 p-0.5"
       role="group"
       aria-label="Reporting period"
     >
@@ -22,7 +22,7 @@ export function PeriodSelect({ active }: { active: DashboardPeriodKey }) {
           className={cn(
             "rounded px-3 py-1 text-xs font-medium transition-colors",
             p.key === active
-              ? "bg-brand text-white"
+              ? "bg-brand-solid text-brand-foreground shadow-glass-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
         >

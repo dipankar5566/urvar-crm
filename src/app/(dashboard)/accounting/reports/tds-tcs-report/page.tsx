@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ExportLinks } from "@/components/accounting/export-links";
+import { inputClassName } from "@/components/ui/input";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function TdsTcsReportPage({
           <label htmlFor="asOf" className="text-xs text-muted-foreground">As of</label>
           <input
             id="asOf" name="asOf" type="date" defaultValue={asOf ?? todayIso()}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            className={inputClassName}
           />
         </div>
         <button type="submit" className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground">

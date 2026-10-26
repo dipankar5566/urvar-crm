@@ -13,9 +13,9 @@ export function SectionTitle({ children }: { children: React.ReactNode }) {
 
 const TONE_CLASS = {
   default: "",
-  good: "text-emerald-600 dark:text-emerald-400",
-  warn: "text-amber-600 dark:text-amber-400",
-  bad: "text-red-600 dark:text-red-400",
+  good: "text-success",
+  warn: "text-warning",
+  bad: "text-destructive",
 } as const;
 
 export type StatTone = keyof typeof TONE_CLASS;

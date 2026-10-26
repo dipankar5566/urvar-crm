@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableRow, TableFooter,
 } from "@/components/ui/table";
+import { inputClassName } from "@/components/ui/input";
 import { ExportLinks } from "@/components/accounting/export-links";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +82,7 @@ export default async function BalanceSheetPage({
           <label htmlFor="asOf" className="text-xs text-muted-foreground">As of</label>
           <input
             id="asOf" name="asOf" type="date" defaultValue={asOf ?? todayIso()}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            className={inputClassName}
           />
         </div>
         <button type="submit" className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground">

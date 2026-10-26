@@ -23,11 +23,11 @@ const PARTIES_SHOWN = 10;
 
 const BUCKET_ORDER: AgeingBucketKey[] = ["current", "d1_30", "d31_60", "d61_90", "d90_plus"];
 const BUCKET_COLOR: Record<AgeingBucketKey, string> = {
-  current: "bg-emerald-500",
-  d1_30: "bg-amber-400",
-  d31_60: "bg-orange-500",
-  d61_90: "bg-red-500",
-  d90_plus: "bg-red-800",
+  current: "bg-aging-1",
+  d1_30: "bg-aging-2",
+  d31_60: "bg-aging-3",
+  d61_90: "bg-aging-4",
+  d90_plus: "bg-aging-5",
 };
 
 const fmt = (v: Parameters<typeof formatInr>[0]) => formatInr(v, { alwaysPaise: false });
@@ -303,7 +303,7 @@ function PartyBalances({
                     <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{fmt(p.total)}</td>
                     <td
                       className={`px-4 py-2.5 text-right tabular-nums ${
-                        p.due.greaterThan(0) ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                        p.due.greaterThan(0) ? "text-warning" : "text-muted-foreground"
                       }`}
                     >
                       {p.due.greaterThan(0) ? fmt(p.due) : "—"}

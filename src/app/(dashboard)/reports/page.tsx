@@ -158,7 +158,7 @@ export default async function ReportsPage({
               data={revenueByStateChart}
               dataKey="revenue"
               nameKey="name"
-              color="#0ea5e9"
+              color="var(--chart-2)"
               format="currency"
             />
           </CardContent>
