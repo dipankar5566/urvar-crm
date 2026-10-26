@@ -19,13 +19,24 @@ import {
 type ActionResult = { error: string } | { success: true };
 type ImportActionResult = { error: string } | { success: true; importBatch: string; imported: number; autoMatched: number };
 
-/** Accepts ISO (2026-10-26), Indian dd/mm/yyyy or dd-mm-yyyy, and falls back to whatever Date() itself can parse. */
+/**
+ * Accepts ISO (2026-10-26), Indian dd/mm/yyyy or dd-mm-yyyy, and falls back
+ * to whatever Date() itself can parse.
+ *
+ * The dd/mm/yyyy branch is built at local noon, not local midnight: every
+ * display in this feature reads the date back with `toISOString().slice(0,
+ * 10)`, and a server running in a timezone ahead of UTC (IST included) turns
+ * local midnight into the previous UTC day — a statement dated 25/10 was
+ * showing as 24/10 in the UI. Noon is clear of that boundary in every real
+ * timezone, the same reason `tests/helpers/db.ts`'s `openPeriodDate()` does
+ * this.
+ */
 function parseStatementDate(raw: string): Date | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const dmy = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
-    const d = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    const d = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]), 12, 0, 0);
     return Number.isNaN(d.getTime()) ? null : d;
   }
   const d = new Date(trimmed);
